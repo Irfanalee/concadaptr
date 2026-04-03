@@ -94,15 +94,23 @@ print(model)
 
 ```python
 from concadptr import ConcAdptrTrainer
-from datasets import load_dataset
+from datasets import load_dataset, concatenate_datasets
 
+# Router training data: a MIX of domain samples (NOT customer data)
+# The router needs to see examples from different domains
+# so it learns which adapter helps with which type of input
+medical_samples = load_dataset("medical_qa", split="train[:500]")
+legal_samples = load_dataset("legal_docs", split="train[:500]")
+finance_samples = load_dataset("finance_qa", split="train[:500]")
+
+# Combine into one mixed dataset
+router_dataset = concatenate_datasets([medical_samples, legal_samples, finance_samples])
 # Use your general-purpose dataset (NOT customer data)
-dataset = load_dataset("your_dataset")
-
+#dataset = load_dataset("your_dataset")
 trainer = ConcAdptrTrainer(
-    model=model,
-    train_dataset=dataset["train"],
-    eval_dataset=dataset["test"],
+    model=model,  # This already has all 3 adapters loaded + the router
+    train_dataset=router_dataset,
+    eval_dataset=eval_dataset,
     learning_rate=1e-4,
     num_epochs=3,
     batch_size=4,
@@ -272,7 +280,9 @@ Apache 2.0 — see [LICENSE](LICENSE) for details.
 
 ## Author
 
-**Irfan Ali** — [GitHub](https://github.com/irfanalii) · [HuggingFace](https://huggingface.co/irfanalii) · [LinkedIn](https://linkedin.com/in/irfanalii)
+**Irfan Ali** — [GitHub](https://github.com/irfanalee) · [HuggingFace](https://huggingface.co/irfanalee) · [LinkedIn](https://linkedin.com/in/irfanalii)
+
+
 
 ---
 
