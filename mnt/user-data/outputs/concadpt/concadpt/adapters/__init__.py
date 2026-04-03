@@ -249,7 +249,7 @@ class AdapterRegistry:
             return "No adapters registered."
 
         lines = [
-            f"ConcAdpt Adapter Registry ({self.num_adapters} adapters)",
+            f"ConcAdptr Adapter Registry ({self.num_adapters} adapters)",
             "=" * 60,
         ]
 

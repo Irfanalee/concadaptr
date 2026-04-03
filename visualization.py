@@ -1,5 +1,5 @@
 """
-Visualization utilities for ConcAdpt routing analysis.
+Visualization utilities for ConcAdptr routing analysis.
 
 Provides tools for understanding how the router distributes tokens
 across experts, diagnosing expert collapse, and visualizing
@@ -119,7 +119,7 @@ def print_routing_summary(
     Returns:
         Formatted summary string.
     """
-    lines = ["ConcAdpt Routing Summary", "=" * 40]
+    lines = ["ConcAdptr Routing Summary", "=" * 40]
 
     if "routing_entropy" in routing_stats:
         entropy = routing_stats["routing_entropy"].item()

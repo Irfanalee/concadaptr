@@ -1,4 +1,4 @@
-# ConcAdpt Configuration Example
+# ConcAdptr Configuration Example
 # ─────────────────────────────────
 # Fuse 3 customer-specific LoRA adapters into a MoE system
 
@@ -35,4 +35,4 @@ training:
   max_seq_length: 2048
   warmup_ratio: 0.1
   weight_decay: 0.01
-  output_dir: "./concadpt_output"
+  output_dir: "./concadptr_output"

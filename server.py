@@ -1,5 +1,5 @@
 """
-FastAPI inference server for ConcAdpt models.
+FastAPI inference server for ConcAdptr models.
 
 Provides OpenAI-compatible /v1/completions endpoint with
 automatic expert routing.
@@ -18,10 +18,10 @@ def create_app(
     host: str = "0.0.0.0",
     port: int = 8000,
 ):
-    """Create a FastAPI app for serving a ConcAdpt model.
+    """Create a FastAPI app for serving a ConcAdptr model.
 
     Args:
-        model_path: Path to saved ConcAdpt model directory.
+        model_path: Path to saved ConcAdptr model directory.
         host: Server host.
         port: Server port.
 
@@ -34,11 +34,11 @@ def create_app(
     except ImportError:
         raise ImportError(
             "Serving dependencies not installed. "
-            "Install with: pip install concadpt[serving]"
+            "Install with: pip install concadptr[serving]"
         )
 
     app = FastAPI(
-        title="ConcAdpt Inference Server",
+        title="ConcAdptr Inference Server",
         description="Mixture of LoRA Experts inference with learned routing.",
         version="0.1.0",
     )
@@ -48,10 +48,10 @@ def create_app(
 
     @app.on_event("startup")
     async def load_model():
-        from concadpt.model import ConcAdptModel
+        from concadptr.model import ConcAdptrModel
 
-        logger.info(f"Loading ConcAdpt model from {model_path}...")
-        _model_state["model"] = ConcAdptModel.load_pretrained(model_path)
+        logger.info(f"Loading ConcAdptr model from {model_path}...")
+        _model_state["model"] = ConcAdptrModel.load_pretrained(model_path)
         _model_state["model"].router.eval()
         logger.info("Model loaded and ready for inference.")
 
@@ -105,10 +105,10 @@ def create_app(
 
 
 def serve(model_path: str, host: str = "0.0.0.0", port: int = 8000):
-    """Start the ConcAdpt inference server.
+    """Start the ConcAdptr inference server.
 
     Args:
-        model_path: Path to saved ConcAdpt model.
+        model_path: Path to saved ConcAdptr model.
         host: Server host.
         port: Server port.
     """
@@ -117,7 +117,7 @@ def serve(model_path: str, host: str = "0.0.0.0", port: int = 8000):
     except ImportError:
         raise ImportError(
             "Serving dependencies not installed. "
-            "Install with: pip install concadpt[serving]"
+            "Install with: pip install concadptr[serving]"
         )
 
     app = create_app(model_path, host, port)

@@ -1,5 +1,5 @@
 """
-ConcAdptModel — Core model class for ConcAdpt.
+ConcAdptrModel — Core model class for ConcAdptr.
 
 Composes a base transformer model with multiple LoRA adapters
 and a learned routing network. This is the main user-facing class.
@@ -16,31 +16,31 @@ import torch.nn as nn
 from peft import PeftModel, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-from concadpt.adapters import AdapterRegistry
-from concadpt.config import ConcAdptConfig, RoutingStrategy
-from concadpt.router import BaseRouter, SoftMergingRouter, TopKRouter, XLoRARouter
+from concadptr.adapters import AdapterRegistry
+from concadptr.config import ConcAdptrConfig, RoutingStrategy
+from concadptr.router import BaseRouter, SoftMergingRouter, TopKRouter, XLoRARouter
 
 logger = logging.getLogger(__name__)
 
 
-class ConcAdptModel(nn.Module):
-    """ConcAdpt model: base model + multiple LoRA adapters + learned router.
+class ConcAdptrModel(nn.Module):
+    """ConcAdptr model: base model + multiple LoRA adapters + learned router.
 
     This is the main class for building a Mixture of LoRA Experts system.
     It handles loading the base model, attaching multiple LoRA adapters,
     initializing the routing network, and coordinating forward passes.
 
     The typical workflow is:
-        1. Create from config: model = ConcAdptModel.from_config(config)
-        2. Train router: model.train_router(dataset)  # via ConcAdptTrainer
+        1. Create from config: model = ConcAdptrModel.from_config(config)
+        2. Train router: model.train_router(dataset)  # via ConcAdptrTrainer
         3. Inference: outputs = model.generate(inputs)
         4. Save: model.save_pretrained("./output")
 
     Args:
-        config: ConcAdptConfig with all settings.
+        config: ConcAdptrConfig with all settings.
     """
 
-    def __init__(self, config: ConcAdptConfig):
+    def __init__(self, config: ConcAdptrConfig):
         super().__init__()
         self.config = config
         self.registry = AdapterRegistry()
@@ -51,17 +51,17 @@ class ConcAdptModel(nn.Module):
         self._is_loaded = False
 
     @classmethod
-    def from_config(cls, config: ConcAdptConfig) -> "ConcAdptModel":
-        """Create a ConcAdptModel from a configuration.
+    def from_config(cls, config: ConcAdptrConfig) -> "ConcAdptrModel":
+        """Create a ConcAdptrModel from a configuration.
 
         This is the primary constructor. It validates the config,
         loads the base model, attaches adapters, and initializes the router.
 
         Args:
-            config: ConcAdptConfig instance.
+            config: ConcAdptrConfig instance.
 
         Returns:
-            Initialized ConcAdptModel ready for router training or inference.
+            Initialized ConcAdptrModel ready for router training or inference.
         """
         issues = config.validate()
         errors = [i for i in issues if i.startswith("ERROR")]
@@ -78,16 +78,16 @@ class ConcAdptModel(nn.Module):
         return model
 
     @classmethod
-    def from_yaml(cls, path: Union[str, Path]) -> "ConcAdptModel":
-        """Create a ConcAdptModel from a YAML configuration file.
+    def from_yaml(cls, path: Union[str, Path]) -> "ConcAdptrModel":
+        """Create a ConcAdptrModel from a YAML configuration file.
 
         Args:
             path: Path to the YAML config file.
 
         Returns:
-            Initialized ConcAdptModel.
+            Initialized ConcAdptrModel.
         """
-        config = ConcAdptConfig.from_yaml(path)
+        config = ConcAdptrConfig.from_yaml(path)
         return cls.from_config(config)
 
     def _load_base_model(self) -> None:
@@ -348,7 +348,7 @@ class ConcAdptModel(nn.Module):
         torch.save(self.router.state_dict(), path / "router.pt")
 
         # Save config
-        self.config.save(path / "concadpt_config.yaml")
+        self.config.save(path / "concadptr_config.yaml")
 
         # Save adapter registry info
         import json
@@ -366,33 +366,33 @@ class ConcAdptModel(nn.Module):
         with open(path / "adapter_registry.json", "w") as f:
             json.dump(registry_info, f, indent=2)
 
-        logger.info(f"ConcAdpt model saved to {path}")
+        logger.info(f"ConcAdptr model saved to {path}")
 
     @classmethod
-    def load_pretrained(cls, path: Union[str, Path]) -> "ConcAdptModel":
-        """Load a previously saved ConcAdpt model.
+    def load_pretrained(cls, path: Union[str, Path]) -> "ConcAdptrModel":
+        """Load a previously saved ConcAdptr model.
 
         Args:
             path: Directory containing the saved fusion model.
 
         Returns:
-            Loaded ConcAdptModel ready for inference.
+            Loaded ConcAdptrModel ready for inference.
         """
         path = Path(path)
 
-        config = ConcAdptConfig.from_yaml(path / "concadpt_config.yaml")
+        config = ConcAdptrConfig.from_yaml(path / "concadptr_config.yaml")
         model = cls.from_config(config)
 
         # Load router weights
         router_state = torch.load(path / "router.pt", map_location="cpu")
         model.router.load_state_dict(router_state)
 
-        logger.info(f"ConcAdpt model loaded from {path}")
+        logger.info(f"ConcAdptr model loaded from {path}")
         return model
 
     def __repr__(self) -> str:
         parts = [
-            f"ConcAdptModel(",
+            f"ConcAdptrModel(",
             f"  base_model='{self.config.base_model}',",
             f"  num_adapters={self.registry.num_adapters},",
             f"  adapter_names={self.registry.names},",

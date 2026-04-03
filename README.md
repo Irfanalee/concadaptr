@@ -1,4 +1,4 @@
-# 🧪 ConcAdpt
+# 🧪 ConcAdptr
 
 **Concocting Adapters — Brew multiple LoRA adapters into Mixture-of-Experts systems.**
 
@@ -6,19 +6,19 @@
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
-[![PyPI version](https://img.shields.io/badge/pypi-v0.1.0-orange.svg)](https://pypi.org/project/concadpt/)
+[![PyPI version](https://img.shields.io/badge/pypi-v0.1.0-orange.svg)](https://pypi.org/project/concadptr/)
 
 ---
 
-ConcAdpt takes independently trained LoRA adapters and concocts them into MoE-style expert systems with learned routing. Model-agnostic. Privacy-preserving. Built for production.
+ConcAdptr takes independently trained LoRA adapters and concocts them into MoE-style expert systems with learned routing. Model-agnostic. Privacy-preserving. Built for production.
 
 ## The Problem
 
-You fine-tune a base model with LoRA for your product. Then each customer needs their own specialization — but they can't share their data. You end up with multiple LoRA adapters trained in isolation. How do you combine them into something smarter than any individual adapter?
+You fine-tune a base model with LoRA for your product. Then each customer/user-group needs their own specialization — but they can't share their data. You end up with multiple LoRA adapters trained in isolation. How do you combine them into something smarter than any individual adapter?
 
 ## The Solution
 
-ConcAdpt takes your independently trained LoRA adapters and concocts them into experts within a Mixture-of-Experts system. A lightweight router learns which expert(s) to activate for each input — without needing access to any customer's original training data.
+ConcAdptr takes your independently trained LoRA adapters and concocts them into experts within a Mixture-of-Experts system. A lightweight router learns which expert(s) to activate for each input — without needing access to any customer's original training data.
 
 ```
 Base Model ─┬─ LoRA Adapter A (medical)    ──┐
@@ -38,15 +38,15 @@ Base Model ─┬─ LoRA Adapter A (medical)    ──┐
 ## Installation
 
 ```bash
-pip install concadpt
+pip install concadptr
 ```
 
 With optional dependencies:
 
 ```bash
-pip install concadpt[training]   # + bitsandbytes, trl
-pip install concadpt[serving]    # + fastapi, uvicorn
-pip install concadpt[all]        # everything
+pip install concadptr[training]   # + bitsandbytes, trl
+pip install concadptr[serving]    # + fastapi, uvicorn
+pip install concadptr[all]        # everything
 ```
 
 ## Quick Start
@@ -54,9 +54,9 @@ pip install concadpt[all]        # everything
 ### 1. Define your configuration
 
 ```python
-from concadpt import ConcAdptConfig
+from concadptr import ConcAdptrConfig
 
-config = ConcAdptConfig(
+config = ConcAdptrConfig(
     base_model="Qwen/Qwen2.5-7B-Instruct",
     adapters={
         "medical": "./adapters/medical_invoices",
@@ -71,17 +71,17 @@ config = ConcAdptConfig(
 Or load from YAML:
 
 ```python
-config = ConcAdptConfig.from_yaml("config.yaml")
+config = ConcAdptrConfig.from_yaml("config.yaml")
 ```
 
 ### 2. Build the concocted model
 
 ```python
-from concadpt import ConcAdptModel
+from concadptr import ConcAdptrModel
 
-model = ConcAdptModel.from_config(config)
+model = ConcAdptrModel.from_config(config)
 print(model)
-# ConcAdptModel(
+# ConcAdptrModel(
 #   base_model='Qwen/Qwen2.5-7B-Instruct',
 #   num_adapters=3,
 #   adapter_names=['medical', 'legal', 'finance'],
@@ -93,13 +93,13 @@ print(model)
 ### 3. Train the router
 
 ```python
-from concadpt import ConcAdptTrainer
+from concadptr import ConcAdptrTrainer
 from datasets import load_dataset
 
 # Use your general-purpose dataset (NOT customer data)
 dataset = load_dataset("your_dataset")
 
-trainer = ConcAdptTrainer(
+trainer = ConcAdptrTrainer(
     model=model,
     train_dataset=dataset["train"],
     eval_dataset=dataset["test"],
@@ -115,7 +115,7 @@ model.save_pretrained("./concocted_model")
 ### 4. Analyze routing patterns
 
 ```python
-from concadpt.utils import print_routing_summary
+from concadptr.utils import print_routing_summary
 
 model.router.enable_history(True)
 # Run some inference...
@@ -125,7 +125,7 @@ print_routing_summary(stats, expert_names=["medical", "legal", "finance"])
 
 Output:
 ```
-ConcAdpt Routing Summary
+ConcAdptr Routing Summary
 ========================================
 Routing Entropy: 1.0234 / 1.0986 (max)
 Uniformity: 93.2%
@@ -144,7 +144,7 @@ Expert Utilization (top-2):
 ### 5. Serve (optional)
 
 ```python
-from concadpt.serving import serve
+from concadptr.serving import serve
 
 serve("./concocted_model", host="0.0.0.0", port=8000)
 ```
@@ -167,7 +167,7 @@ curl -X POST http://localhost:8000/v1/completions \
 
 ```
 ┌──────────────────────────────────────────────┐
-│                 ConcAdptModel                │
+│                 ConcAdptrModel                │
 │                                              │
 │  ┌──────────┐  ┌───────────────────────────┐ │
 │  │   Base    │  │     Adapter Registry      │ │
@@ -195,24 +195,24 @@ curl -X POST http://localhost:8000/v1/completions \
 
 ## The Multi-Customer Use Case
 
-ConcAdpt was designed for a specific real-world pattern:
+ConcAdptr was designed for a specific real-world pattern:
 
 1. **You** fine-tune a base model on your general training data → your product's foundation model
 2. **Each customer** fine-tunes on their private data (on-premise) → produces a LoRA adapter
 3. **The adapter** (50-200MB, no raw data) is transferred back to you
-4. **ConcAdpt** concocts all customer adapters into a MoE system with learned routing
+4. **ConcAdptr** concocts all customer adapters into a MoE system with learned routing
 
 Customer data never leaves their environment. The router learns which expert(s) to activate without seeing the original training data. This is **federated expertise** — cross-customer knowledge transfer without data sharing.
 
 ## Project Structure
 
 ```
-concadpt/
-├── concadpt/
+concadptr/
+├── concadptr/
 │   ├── __init__.py          # Public API
 │   ├── config.py            # Configuration classes
-│   ├── model.py             # ConcAdptModel (core)
-│   ├── trainer.py           # ConcAdptTrainer (router training)
+│   ├── model.py             # ConcAdptrModel (core)
+│   ├── trainer.py           # ConcAdptrTrainer (router training)
 │   ├── router/
 │   │   ├── base.py          # BaseRouter ABC
 │   │   ├── soft_merging.py  # Dense/soft routing (MoLoRA)
@@ -236,8 +236,8 @@ concadpt/
 ## Development
 
 ```bash
-git clone https://github.com/irfanalii/concadpt.git
-cd concadpt
+git clone https://github.com/irfanalii/concadptr.git
+cd concadptr
 pip install -e ".[dev]"
 pytest
 ```
@@ -276,4 +276,4 @@ Apache 2.0 — see [LICENSE](LICENSE) for details.
 
 ---
 
-*ConcAdpt — because the best models are concocted, not just trained.*
+*ConcAdptr — because the best models are concocted, not just trained.*

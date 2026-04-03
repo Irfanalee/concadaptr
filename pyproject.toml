@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "concadpt"
+name = "concadptr"
 version = "0.1.0"
 description = "Fuse multiple LoRA adapters into Mixture-of-Experts systems. Train → Compose → Serve."
 readme = "README.md"
@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = [
     "lora", "mixture-of-experts", "moe", "fine-tuning", "peft",
-    "llm", "transformers", "adapter", "molora", "concadpt",
+    "llm", "transformers", "adapter", "molora", "concadptr",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -54,16 +54,16 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.7.0",
 ]
-all = ["concadpt[training,serving,dev]"]
+all = ["concadptr[training,serving,dev]"]
 
 [project.urls]
-Homepage = "https://github.com/irfanalii/concadpt"
-Documentation = "https://github.com/irfanalii/concadpt#readme"
-Repository = "https://github.com/irfanalii/concadpt"
-Issues = "https://github.com/irfanalii/concadpt/issues"
+Homepage = "https://github.com/irfanalii/concadptr"
+Documentation = "https://github.com/irfanalii/concadptr#readme"
+Repository = "https://github.com/irfanalii/concadptr"
+Issues = "https://github.com/irfanalii/concadptr/issues"
 
 [tool.setuptools.packages.find]
-include = ["concadpt*"]
+include = ["concadptr*"]
 
 [tool.ruff]
 target-version = "py39"

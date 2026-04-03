@@ -1,5 +1,5 @@
 """
-ConcAdptTrainer — Training loop for the ConcAdpt router.
+ConcAdptrTrainer — Training loop for the ConcAdptr router.
 
 Trains only the routing/gating network while keeping the base model
 and all LoRA adapters frozen. Designed for efficiency on consumer GPUs.
@@ -21,19 +21,19 @@ from tqdm import tqdm
 logger = logging.getLogger(__name__)
 
 
-class ConcAdptTrainer:
-    """Trainer for ConcAdpt router networks.
+class ConcAdptrTrainer:
+    """Trainer for ConcAdptr router networks.
 
     Only trains the router parameters. Base model and adapter weights
     remain frozen throughout training.
 
     Example:
-        >>> trainer = ConcAdptTrainer(model, train_dataset, eval_dataset)
+        >>> trainer = ConcAdptrTrainer(model, train_dataset, eval_dataset)
         >>> trainer.train()
         >>> model.save_pretrained("./output")
 
     Args:
-        model: ConcAdptModel instance.
+        model: ConcAdptrModel instance.
         train_dataset: Training dataset (HuggingFace Dataset or compatible).
         eval_dataset: Optional evaluation dataset.
         output_dir: Directory for saving checkpoints.
@@ -52,10 +52,10 @@ class ConcAdptTrainer:
 
     def __init__(
         self,
-        model: Any,  # ConcAdptModel — avoid circular import
+        model: Any,  # ConcAdptrModel — avoid circular import
         train_dataset: Any,
         eval_dataset: Optional[Any] = None,
-        output_dir: str = "./concadpt_output",
+        output_dir: str = "./concadptr_output",
         learning_rate: float = 1e-4,
         num_epochs: int = 3,
         batch_size: int = 4,
@@ -138,7 +138,7 @@ class ConcAdptTrainer:
             Training statistics dictionary.
         """
         logger.info("=" * 60)
-        logger.info("ConcAdpt Router Training")
+        logger.info("ConcAdptr Router Training")
         logger.info("=" * 60)
         logger.info(f"  Adapters: {self.model.registry.names}")
         logger.info(f"  Router: {self.model.config.router.strategy.value}")

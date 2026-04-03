@@ -1,5 +1,5 @@
 """
-Configuration classes for ConcAdpt.
+Configuration classes for ConcAdptr.
 
 Provides structured configs for model composition, router training, and serving.
 """
@@ -86,7 +86,7 @@ class TrainingConfig:
     logging_steps: int = 10
     eval_steps: int = 50
     save_steps: int = 100
-    output_dir: str = "./concadpt_output"
+    output_dir: str = "./concadptr_output"
 
 
 @dataclass
@@ -111,8 +111,8 @@ class ServingConfig:
 
 
 @dataclass
-class ConcAdptConfig:
-    """Top-level configuration for ConcAdpt.
+class ConcAdptrConfig:
+    """Top-level configuration for ConcAdptr.
 
     This is the main configuration class that ties everything together.
     It can be created programmatically or loaded from a YAML file.
@@ -133,7 +133,7 @@ class ConcAdptConfig:
         freeze_base_model: Whether to freeze base model weights (should always be True).
 
     Example:
-        >>> config = ConcAdptConfig(
+        >>> config = ConcAdptrConfig(
         ...     base_model="Qwen/Qwen2.5-7B-Instruct",
         ...     adapters={
         ...         "medical": "./adapters/medical",
@@ -180,7 +180,7 @@ class ConcAdptConfig:
 
         if len(self.adapters) < 2:
             issues.append(
-                "WARNING: ConcAdpt works best with 2+ adapters. "
+                "WARNING: ConcAdptr works best with 2+ adapters. "
                 "With a single adapter, consider using PEFT directly."
             )
 
@@ -265,14 +265,14 @@ class ConcAdptConfig:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
     @classmethod
-    def from_yaml(cls, path: Union[str, Path]) -> "ConcAdptConfig":
+    def from_yaml(cls, path: Union[str, Path]) -> "ConcAdptrConfig":
         """Load configuration from a YAML file.
 
         Args:
             path: Path to the YAML configuration file.
 
         Returns:
-            ConcAdptConfig instance.
+            ConcAdptrConfig instance.
         """
         with open(path) as f:
             data = yaml.safe_load(f)

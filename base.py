@@ -1,5 +1,5 @@
 """
-Base router class for ConcAdpt.
+Base router class for ConcAdptr.
 
 All routing strategies inherit from BaseRouter and implement the forward method
 to produce expert weights for each input token.
@@ -15,7 +15,7 @@ import torch.nn as nn
 
 
 class BaseRouter(ABC, nn.Module):
-    """Abstract base class for all ConcAdpt routers.
+    """Abstract base class for all ConcAdptr routers.
 
     A router takes hidden states from the transformer and produces
     per-expert weights that determine how LoRA adapter outputs are combined.

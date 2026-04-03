@@ -1,4 +1,4 @@
-"""Tests for ConcAdpt core components."""
+"""Tests for ConcAdptr core components."""
 
 import json
 import tempfile
@@ -7,51 +7,51 @@ from pathlib import Path
 import pytest
 import torch
 
-from concadpt.config import ConcAdptConfig, RouterConfig, RoutingStrategy
-from concadpt.router.soft_merging import SoftMergingRouter
-from concadpt.router.top_k import TopKRouter
-from concadpt.router.xlora import XLoRARouter
-from concadpt.adapters import AdapterRegistry
+from concadptr.config import ConcAdptrConfig, RouterConfig, RoutingStrategy
+from concadptr.router.soft_merging import SoftMergingRouter
+from concadptr.router.top_k import TopKRouter
+from concadptr.router.xlora import XLoRARouter
+from concadptr.adapters import AdapterRegistry
 
 
 # ── Config Tests ──
 
 
-class TestConcAdptConfig:
+class TestConcAdptrConfig:
     def test_default_config(self):
-        config = ConcAdptConfig()
+        config = ConcAdptrConfig()
         assert config.routing_strategy == "xlora"
         assert config.quantization == "4bit"
         assert config.freeze_adapters is True
 
     def test_routing_strategy_sync(self):
-        config = ConcAdptConfig(routing_strategy="top_k")
+        config = ConcAdptrConfig(routing_strategy="top_k")
         assert config.router.strategy == RoutingStrategy.TOP_K
 
     def test_validation_no_base_model(self):
-        config = ConcAdptConfig(base_model="", adapters={"a": "/tmp/fake"})
+        config = ConcAdptrConfig(base_model="", adapters={"a": "/tmp/fake"})
         issues = config.validate()
         assert any("base_model" in i for i in issues)
 
     def test_validation_no_adapters(self):
-        config = ConcAdptConfig(base_model="model", adapters={})
+        config = ConcAdptrConfig(base_model="model", adapters={})
         issues = config.validate()
         assert any("adapter" in i.lower() for i in issues)
 
     def test_validation_single_adapter_warning(self):
-        config = ConcAdptConfig(base_model="model", adapters={"a": "/tmp/fake"})
+        config = ConcAdptrConfig(base_model="model", adapters={"a": "/tmp/fake"})
         issues = config.validate()
         assert any("WARNING" in i and "2+" in i for i in issues)
 
     def test_yaml_roundtrip(self):
-        config = ConcAdptConfig(
+        config = ConcAdptrConfig(
             base_model="test-model",
             adapters={"a": "/path/a", "b": "/path/b"},
             routing_strategy="soft_merging",
         )
         with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
             config.save(f.name)
-            loaded = ConcAdptConfig.from_yaml(f.name)
+            loaded = ConcAdptrConfig.from_yaml(f.name)
 
         assert loaded.base_model == "test-model"
         assert loaded.adapters == {"a": "/path/a", "b": "/path/b"}

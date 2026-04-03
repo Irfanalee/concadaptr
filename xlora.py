@@ -16,7 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from concadpt.router.base import BaseRouter
+from concadptr.router.base import BaseRouter
 
 
 class XLoRARouter(BaseRouter):
