@@ -1,0 +1,38 @@
+# ConcAdpt Configuration Example
+# ─────────────────────────────────
+# Fuse 3 customer-specific LoRA adapters into a MoE system
+
+base_model: "Qwen/Qwen2.5-7B-Instruct"
+
+adapters:
+  medical: "./adapters/medical_invoices"
+  legal: "./adapters/legal_contracts"
+  finance: "./adapters/financial_reports"
+
+routing_strategy: "xlora"  # Options: xlora, soft_merging, top_k
+
+quantization: "4bit"       # Options: 4bit, 8bit, null
+torch_dtype: "bfloat16"
+device_map: "auto"
+trust_remote_code: true
+freeze_adapters: true       # Keep customer adapters frozen (recommended)
+freeze_base_model: true
+
+router:
+  strategy: "xlora"
+  num_experts_per_token: 2   # Only used for top_k strategy
+  router_hidden_size: 256
+  router_depth: 1
+  softmax_temperature: 1.0
+  load_balance_weight: 0.01  # Auxiliary loss weight
+  dropout: 0.1
+  use_layerwise_routing: true
+
+training:
+  learning_rate: 0.0001
+  num_epochs: 3
+  batch_size: 4
+  max_seq_length: 2048
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  output_dir: "./concadpt_output"
