@@ -99,13 +99,34 @@ The forward pass works like this:
 
 ## Key TODOs
 
-The main outstanding work item is the **per-layer routing hook in the generation loop**. Currently `model.py` forward pass runs each adapter separately and combines logits at the output level. The production version needs to hook into each transformer layer to apply routing weights to LoRA deltas before they're added to the base model output, which is more efficient (single forward pass) and enables true layer-wise routing.
+**Completed:**
+- ~~Per-layer routing hook~~ — 2-pass forward with per-layer LoRA delta weighting via hooks
+- ~~HuggingFace Hub upload/download~~ — `push_to_hub`, `from_hub`, `push_adapter_to_hub`, `load_adapter_from_hub`
 
-Other TODOs:
-- vLLM integration for high-throughput multi-LoRA serving
-- Static merging fallback (linear, TIES, DARE via mergekit)
-- HuggingFace Hub upload/download for adapters
-- Benchmarking suite across model families (Qwen, LLaMA, Mistral)
+**Serving:**
+- vLLM integration for high-throughput multi-LoRA serving (§6.2 in research paper)
+- Hook per-layer routing into the generation loop (currently only forward pass, not `generate()`)
+
+**Adapter Merging (Static Fallback):**
+- Linear weighted merging — weighted average of adapter deltas (§5.1)
+- TIES-Merging — trim, elect sign, merge to reduce interference (§5.2)
+- DARE — stochastic drop + rescale before merging (§5.3)
+- Recommended: implement via `mergekit` integration or native PyTorch
+
+**Evaluation & Benchmarking:**
+- Benchmarking suite across model families (Qwen2.5, LLaMA 3.1, Mistral) (§9.3)
+- Task-specific metrics (accuracy, F1, BLEU/ROUGE)
+- General capability benchmarks to detect catastrophic forgetting (MMLU, HellaSwag)
+- Per-adapter A/B comparison tooling
+
+**Adapter Lifecycle:**
+- Adapter version metadata (base model version, training config hash, eval metrics) (§7.3)
+- Progressive merging pipeline — incremental adapter integration with quality gating (§7.1)
+
+**Advanced (Future):**
+- Federated LoRA training (FedAvg on adapter weights) (§11)
+- Adapter distillation — compress multiple adapters into one lower-rank adapter (§11)
+- Differential privacy training support (DP-SGD via Opacus) (§8.2)
 
 ## Testing
 
