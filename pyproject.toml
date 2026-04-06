@@ -56,7 +56,10 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.7.0",
 ]
-all = ["concadptr[training,serving,dev]"]
+hub = [
+    "huggingface_hub>=0.19.0",
+]
+all = ["concadptr[training,serving,hub,dev]"]
 
 [project.urls]
 Homepage = "https://github.com/irfanalii/concadptr"

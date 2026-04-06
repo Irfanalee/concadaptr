@@ -431,6 +431,7 @@ class ConcAdptrModel(nn.Module):
                 "alpha": info.alpha,
                 "target_modules": info.target_modules,
                 "metadata": info.metadata,
+                "hub_repo_id": info.hub_repo_id,
             }
             for name, info in zip(self.registry.names, self.registry)
         }
@@ -459,6 +460,114 @@ class ConcAdptrModel(nn.Module):
         model.router.load_state_dict(router_state)
 
         logger.info(f"ConcAdptr model loaded from {path}")
+        return model
+
+    def push_to_hub(
+        self,
+        repo_id: str,
+        token: Optional[str] = None,
+        private: bool = False,
+        commit_message: Optional[str] = None,
+    ) -> str:
+        """Upload this ConcAdptr model (router + config) to the HuggingFace Hub.
+
+        Only the router weights and config are uploaded. Adapters are referenced
+        by their own Hub repos (set via hub_repo_id on each AdapterInfo).
+
+        Args:
+            repo_id: Hub repo ID, e.g. "username/my-concadptr".
+            token: HF token (uses cached login if None).
+            private: Create a private repo.
+            commit_message: Custom commit message.
+
+        Returns:
+            URL of the uploaded repo.
+        """
+        try:
+            from huggingface_hub import HfApi
+        except ImportError:
+            raise ImportError(
+                "huggingface_hub is required for Hub operations. "
+                "Install it with: pip install 'concadptr[hub]'"
+            )
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            self.save_pretrained(tmp_dir)
+            api = HfApi(token=token)
+            api.create_repo(repo_id=repo_id, repo_type="model", private=private, exist_ok=True)
+            url = api.upload_folder(
+                folder_path=tmp_dir,
+                repo_id=repo_id,
+                repo_type="model",
+                commit_message=commit_message or "Upload ConcAdptr model via concadptr",
+            )
+
+        logger.info(f"ConcAdptr model pushed to {repo_id}")
+        return url
+
+    @classmethod
+    def from_hub(
+        cls,
+        repo_id: str,
+        token: Optional[str] = None,
+        cache_dir: Optional[str] = None,
+    ) -> "ConcAdptrModel":
+        """Load a ConcAdptr model from the HuggingFace Hub.
+
+        Downloads the router weights and config, then pulls each adapter from
+        its own Hub repo (stored in adapter_registry.json as hub_repo_id).
+        Adapters without a hub_repo_id must already be available at the local
+        path recorded in adapter_registry.json.
+
+        Args:
+            repo_id: Hub repo ID, e.g. "username/my-concadptr".
+            token: HF token (uses cached login if None).
+            cache_dir: Local directory to cache downloaded files.
+
+        Returns:
+            Loaded ConcAdptrModel ready for inference.
+        """
+        try:
+            from huggingface_hub import snapshot_download
+        except ImportError:
+            raise ImportError(
+                "huggingface_hub is required for Hub operations. "
+                "Install it with: pip install 'concadptr[hub]'"
+            )
+
+        import json as _json
+
+        local_path = snapshot_download(repo_id=repo_id, token=token, cache_dir=cache_dir)
+
+        # Pull each adapter from its own Hub repo if hub_repo_id is set
+        registry_path = Path(local_path) / "adapter_registry.json"
+        with open(registry_path) as f:
+            registry_data = _json.load(f)
+
+        for adapter_name, adapter_info in registry_data.items():
+            hub_adapter_repo = adapter_info.get("hub_repo_id")
+            if hub_adapter_repo:
+                adapter_local = snapshot_download(
+                    repo_id=hub_adapter_repo,
+                    token=token,
+                    cache_dir=cache_dir,
+                )
+                registry_data[adapter_name]["path"] = adapter_local
+
+        # Write the updated registry with resolved local paths back to a temp copy
+        import tempfile, shutil
+
+        tmp_dir = tempfile.mkdtemp()
+        shutil.copytree(local_path, tmp_dir, dirs_exist_ok=True)
+        with open(Path(tmp_dir) / "adapter_registry.json", "w") as f:
+            _json.dump(registry_data, f, indent=2)
+
+        model = cls.load_pretrained(tmp_dir)
+        shutil.rmtree(tmp_dir)
+
+        logger.info(f"ConcAdptr model loaded from Hub: {repo_id}")
         return model
 
     def __repr__(self) -> str:

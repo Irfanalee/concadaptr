@@ -40,6 +40,7 @@ class AdapterInfo:
     target_modules: List[str] = field(default_factory=list)
     loaded: bool = False
     metadata: Dict = field(default_factory=dict)
+    hub_repo_id: Optional[str] = None  # Set when adapter was pulled from HF Hub
 
 
 class AdapterRegistry:
@@ -265,6 +266,89 @@ class AdapterRegistry:
                 lines.append(f"    Meta:    {info.metadata}")
 
         return "\n".join(lines)
+
+    def push_adapter_to_hub(
+        self,
+        name: str,
+        repo_id: str,
+        token: Optional[str] = None,
+        private: bool = False,
+        commit_message: Optional[str] = None,
+    ) -> str:
+        """Upload an adapter to the HuggingFace Hub.
+
+        The adapter directory (adapter_config.json + weights) is uploaded
+        as a standard PEFT adapter repo so it can be loaded by anyone with
+        PeftModel.from_pretrained().
+
+        Args:
+            name: Name of the registered adapter to push.
+            repo_id: Hub repo ID, e.g. "username/my-adapter".
+            token: HF token (uses cached login if None).
+            private: Create a private repo.
+            commit_message: Custom commit message.
+
+        Returns:
+            URL of the uploaded repo.
+        """
+        try:
+            from huggingface_hub import HfApi
+        except ImportError:
+            raise ImportError(
+                "huggingface_hub is required for Hub operations. "
+                "Install it with: pip install 'concadptr[hub]'"
+            )
+
+        info = self.get(name)
+        api = HfApi(token=token)
+        api.create_repo(repo_id=repo_id, repo_type="model", private=private, exist_ok=True)
+        url = api.upload_folder(
+            folder_path=info.path,
+            repo_id=repo_id,
+            repo_type="model",
+            commit_message=commit_message or f"Upload adapter '{name}' via concadptr",
+        )
+        logger.info(f"Adapter '{name}' pushed to {repo_id}")
+        return url
+
+    def load_adapter_from_hub(
+        self,
+        repo_id: str,
+        name: Optional[str] = None,
+        token: Optional[str] = None,
+        cache_dir: Optional[str] = None,
+    ) -> AdapterInfo:
+        """Download an adapter from the HuggingFace Hub and register it.
+
+        Args:
+            repo_id: Hub repo ID, e.g. "username/my-adapter".
+            name: Local name for the adapter. Defaults to the repo name portion.
+            token: HF token (uses cached login if None).
+            cache_dir: Local directory to cache downloaded files.
+
+        Returns:
+            AdapterInfo for the registered adapter.
+        """
+        try:
+            from huggingface_hub import snapshot_download
+        except ImportError:
+            raise ImportError(
+                "huggingface_hub is required for Hub operations. "
+                "Install it with: pip install 'concadptr[hub]'"
+            )
+
+        if name is None:
+            name = repo_id.split("/")[-1]
+
+        local_path = snapshot_download(
+            repo_id=repo_id,
+            token=token,
+            cache_dir=cache_dir,
+        )
+        info = self.register(name, local_path)
+        info.hub_repo_id = repo_id
+        logger.info(f"Adapter '{name}' loaded from {repo_id} → {local_path}")
+        return info
 
     def __repr__(self) -> str:
         return f"AdapterRegistry(adapters={self.names})"
