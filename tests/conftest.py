@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable
 from unittest.mock import MagicMock
@@ -97,6 +98,16 @@ def make_mock_base_model(
     mock.named_parameters.return_value = iter([("w", fake_param)])
 
     mock.set_adapter = MagicMock()
+
+    # Support the disable_adapter() context manager used in the new 2-pass forward
+    @contextmanager
+    def _disable_adapter_ctx():
+        yield
+
+    mock.disable_adapter = _disable_adapter_ctx
+
+    # No real LoRA layers in the mock — named_modules returns nothing to hook
+    mock.named_modules.return_value = []
 
     return mock
 

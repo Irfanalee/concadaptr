@@ -8,6 +8,7 @@ and a learned routing network. This is the main user-facing class.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -244,16 +245,16 @@ class ConcAdptrModel(nn.Module):
         labels: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Dict[str, Any]:
-        """Forward pass with routed expert composition.
+        """Forward pass with per-layer routed expert composition.
 
-        This is a simplified forward pass that:
-        1. Runs the base model to get hidden states
-        2. For each adapter, computes the adapter's output
-        3. Uses the router to weight and combine adapter outputs
+        Two-pass approach:
+        1. Run base model with adapters disabled to capture per-layer hidden states.
+        2. Compute per-layer routing weights from those hidden states, then run a
+           single forward pass with hooks that apply weighted LoRA deltas at each layer.
 
-        Note: The full production implementation will hook into each
-        transformer layer for layer-wise routing. This initial version
-        uses the final hidden state for routing decisions.
+        This replaces the old N-pass approach (one full pass per adapter) with a
+        fixed 2-pass approach regardless of adapter count, and enables true layer-wise
+        routing rather than routing only at the final logit level.
 
         Args:
             input_ids: Input token IDs.
@@ -261,39 +262,61 @@ class ConcAdptrModel(nn.Module):
             labels: Labels for computing language modeling loss.
 
         Returns:
-            Dict with 'loss', 'logits', 'routing_weights', and 'load_balance_loss'.
+            Dict with 'loss', 'lm_loss', 'logits', 'routing_weights',
+            'routing_weights_per_layer', and 'load_balance_loss'.
         """
         adapter_names = self.registry.names
-        adapter_outputs = {}
+        # Avoid conflict if caller already set output_hidden_states
+        kwargs.pop("output_hidden_states", None)
 
-        # Get output from each adapter
-        for adapter_name in adapter_names:
-            self.base_model.set_adapter(adapter_name)
-            with torch.no_grad() if self.config.freeze_adapters else torch.enable_grad():
-                outputs = self.base_model(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    output_hidden_states=True,
-                    **kwargs,
+        # ── Pass 1: base model only (no LoRA) → per-layer hidden states ──────────
+        with self.base_model.disable_adapter():
+            base_out = self.base_model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_hidden_states=True,
+                **kwargs,
+            )
+
+        # hidden_states[0] = embedding output; [1:] = after each transformer layer
+        layer_hiddens = base_out.hidden_states[1:]
+
+        # ── Compute per-layer routing weights ────────────────────────────────────
+        layer_weights = []
+        for layer_idx, hidden in enumerate(layer_hiddens):
+            w = self.router(hidden.detach(), layer_idx=layer_idx)  # (batch, seq, num_experts)
+            layer_weights.append(w)
+        # (batch, seq, num_layers, num_experts)
+        routing_weights_all = torch.stack(layer_weights, dim=2)
+
+        # ── Pass 2: single forward with LoRA routing hooks ───────────────────────
+        from peft.tuners.lora import LoraLayer
+
+        hooks = []
+        for module_name, module in self.base_model.named_modules():
+            if not isinstance(module, LoraLayer):
+                continue
+            layer_idx = self._extract_layer_idx(module_name)
+            hooks.append(
+                module.register_forward_hook(
+                    self._make_lora_hook(module, layer_idx, adapter_names, routing_weights_all)
                 )
-            adapter_outputs[adapter_name] = outputs
+            )
 
-        # Use the last hidden state from the first adapter for routing
-        # (all adapters share the same base model, so hidden states are similar)
-        reference_hidden = adapter_outputs[adapter_names[0]].hidden_states[-1]
-        routing_weights = self.router(reference_hidden)  # (batch, seq, num_experts)
+        try:
+            self.base_model.set_adapter(adapter_names[0])
+            fwd_out = self.base_model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                **kwargs,
+            )
+        finally:
+            for h in hooks:
+                h.remove()
 
-        # Combine adapter logits using routing weights
-        all_logits = torch.stack(
-            [adapter_outputs[name].logits for name in adapter_names],
-            dim=-1,
-        )  # (batch, seq, vocab, num_experts)
+        fused_logits = fwd_out.logits
 
-        # Apply routing weights: (batch, seq, 1, num_experts) * (batch, seq, vocab, num_experts)
-        weights_expanded = routing_weights.unsqueeze(2)  # (batch, seq, 1, num_experts)
-        fused_logits = (all_logits * weights_expanded).sum(dim=-1)  # (batch, seq, vocab)
-
-        # Compute losses
+        # ── Losses ───────────────────────────────────────────────────────────────
         loss = None
         if labels is not None:
             loss_fct = nn.CrossEntropyLoss()
@@ -304,21 +327,70 @@ class ConcAdptrModel(nn.Module):
                 shift_labels.view(-1),
             )
 
-        # Load balance loss
-        lb_loss = self.router.compute_load_balance_loss(routing_weights)
+        lb_loss = self.router.compute_load_balance_loss(routing_weights_all[:, :, -1, :])
+        total_loss = loss + self.config.router.load_balance_weight * lb_loss if loss is not None else None
 
-        # Total loss
-        total_loss = None
-        if loss is not None:
-            total_loss = loss + self.config.router.load_balance_weight * lb_loss
+        # Mean across layers for the compact summary weight
+        representative_weights = routing_weights_all.mean(dim=2)  # (batch, seq, num_experts)
 
         return {
             "loss": total_loss,
             "lm_loss": loss,
             "logits": fused_logits,
-            "routing_weights": routing_weights.detach(),
+            "routing_weights": representative_weights.detach(),
+            "routing_weights_per_layer": routing_weights_all.detach(),
             "load_balance_loss": lb_loss.detach(),
         }
+
+    @staticmethod
+    def _extract_layer_idx(module_name: str) -> int:
+        """Parse the transformer layer index from a PEFT module name.
+
+        Handles common patterns: .layers.N., .h.N., .blocks.N.
+        Falls back to 0 if no match (e.g., embedding-level modules).
+        """
+        m = re.search(r"\.(layers|h|blocks)\.(\d+)\.", module_name)
+        return int(m.group(2)) if m else 0
+
+    @staticmethod
+    def _make_lora_hook(
+        lora_module,
+        layer_idx: int,
+        adapter_names: List[str],
+        routing_weights_all: torch.Tensor,
+    ):
+        """Return a forward hook that replaces PEFT's single-adapter output with a
+        routing-weighted combination of all adapters' LoRA deltas.
+
+        Args:
+            lora_module: The PEFT LoraLayer whose output will be overridden.
+            layer_idx: Transformer layer index (indexes into routing_weights_all).
+            adapter_names: Ordered list of adapter names.
+            routing_weights_all: Pre-computed weights (batch, seq, num_layers, num_experts).
+        """
+
+        def hook(module, inp, output):
+            x = inp[0]
+            base_out = lora_module.base_layer(x)
+            weights = routing_weights_all[:, :, layer_idx, :]  # (batch, seq, num_experts)
+
+            weighted_delta = torch.zeros_like(base_out)
+            for i, name in enumerate(adapter_names):
+                if name not in lora_module.lora_A:
+                    continue
+                lora_dropout = (
+                    lora_module.lora_dropout.get(name)
+                    if hasattr(lora_module, "lora_dropout")
+                    else None
+                )
+                x_in = lora_dropout(x) if lora_dropout is not None else x
+                delta = lora_module.lora_B[name](lora_module.lora_A[name](x_in))
+                delta = delta * lora_module.scaling[name]
+                weighted_delta = weighted_delta + weights[..., i : i + 1] * delta
+
+            return base_out + weighted_delta
+
+        return hook
 
     def get_trainable_parameters(self) -> List[nn.Parameter]:
         """Get only the trainable parameters (router weights).

@@ -89,12 +89,20 @@ class TestConcAdptrModelForward:
         assert out["loss"].ndim == 0  # scalar
         assert out["loss"].item() > 0
 
-    def test_set_adapter_called_for_each_adapter(self):
+    def test_set_adapter_called_once_for_pass2(self):
         model = _build_model()
         input_ids = torch.zeros(BATCH, SEQ, dtype=torch.long)
         model(input_ids)
-        # set_adapter should be called once per adapter per forward pass
-        assert model.base_model.set_adapter.call_count == NUM_EXPERTS
+        # Pass 2 sets a single adapter (hooks handle the weighted combination)
+        assert model.base_model.set_adapter.call_count == 1
+
+    def test_routing_weights_per_layer_shape(self):
+        model = _build_model()
+        input_ids = torch.zeros(BATCH, SEQ, dtype=torch.long)
+        out = model(input_ids)
+        assert "routing_weights_per_layer" in out
+        # shape: (batch, seq, num_layers, num_experts)
+        assert out["routing_weights_per_layer"].shape == (BATCH, SEQ, 2, NUM_EXPERTS)
 
     def test_load_balance_loss_is_scalar(self):
         model = _build_model()
