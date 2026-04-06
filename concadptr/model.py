@@ -327,11 +327,10 @@ class ConcAdptrModel(nn.Module):
                 shift_labels.view(-1),
             )
 
-        lb_loss = self.router.compute_load_balance_loss(routing_weights_all[:, :, -1, :])
-        total_loss = loss + self.config.router.load_balance_weight * lb_loss if loss is not None else None
-
-        # Mean across layers for the compact summary weight
+        # Mean routing across layers — gives every layer's gate gradient through lb_loss
         representative_weights = routing_weights_all.mean(dim=2)  # (batch, seq, num_experts)
+        lb_loss = self.router.compute_load_balance_loss(representative_weights)
+        total_loss = loss + self.config.router.load_balance_weight * lb_loss if loss is not None else None
 
         return {
             "loss": total_loss,
