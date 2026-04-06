@@ -22,7 +22,7 @@ Quick Start:
 __version__ = "0.1.0"
 __author__ = "Irfan Ali"
 
-from concadptr.config import ConcAdptrConfig, RouterConfig, ServingConfig
+from concadptr.config import ConcAdptrConfig, MergeConfig, RouterConfig, ServingConfig
 from concadptr.model import ConcAdptrModel
 from concadptr.router import (
     BaseRouter,
@@ -31,6 +31,7 @@ from concadptr.router import (
     XLoRARouter,
 )
 from concadptr.adapters import AdapterRegistry
+from concadptr.merging import merge_adapters
 from concadptr.trainer import ConcAdptrTrainer
 
 __all__ = [
@@ -46,6 +47,9 @@ __all__ = [
     "XLoRARouter",
     # Adapters
     "AdapterRegistry",
+    # Merging
+    "merge_adapters",
+    "MergeConfig",
     # Training
     "ConcAdptrTrainer",
 ]

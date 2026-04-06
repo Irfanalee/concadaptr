@@ -32,6 +32,25 @@ class MergeMethod(str, Enum):
 
 
 @dataclass
+class MergeConfig:
+    """Configuration for static adapter merging.
+
+    Args:
+        method: Merging algorithm to use.
+        weights: Per-adapter blending coefficients (defaults to uniform).
+        density: DARE — fraction of parameters to keep (0 < density ≤ 1).
+        trim_fraction: TIES — fraction of low-magnitude params to zero out.
+        seed: DARE random seed for reproducible dropout masks.
+    """
+
+    method: MergeMethod = MergeMethod.LINEAR
+    weights: Optional[List[float]] = None
+    density: float = 0.7
+    trim_fraction: float = 0.2
+    seed: int = 42
+
+
+@dataclass
 class RouterConfig:
     """Configuration for the routing/gating network.
 

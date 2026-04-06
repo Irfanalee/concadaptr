@@ -350,6 +350,47 @@ class AdapterRegistry:
         logger.info(f"Adapter '{name}' loaded from {repo_id} → {local_path}")
         return info
 
+    def merge(
+        self,
+        adapter_names: List[str],
+        output_path: Union[str, Path],
+        method: str = "linear",
+        **kwargs,
+    ) -> Path:
+        """Merge registered adapters into a single PEFT adapter directory.
+
+        Validates adapter compatibility before merging.
+
+        Args:
+            adapter_names: Names of registered adapters to merge.
+            output_path: Directory to write the merged adapter.
+            method: One of ``"linear"``, ``"ties"``, ``"dare"``, ``"dare_ties"``.
+            **kwargs: Forwarded to ``merge_adapters`` (e.g. weights, density,
+                trim_fraction, seed).
+
+        Returns:
+            Path to the saved merged adapter directory.
+        """
+        from pathlib import Path as _Path
+
+        from concadptr.merging import merge_adapters
+
+        # Validate that all requested adapters are registered
+        for name in adapter_names:
+            self.get(name)  # raises KeyError if missing
+
+        # Temporarily restrict registry to the requested adapters and validate
+        subset_adapters = {name: self._adapters[name] for name in adapter_names}
+        original = self._adapters
+        self._adapters = subset_adapters
+        try:
+            self.validate_compatibility()
+        finally:
+            self._adapters = original
+
+        adapter_paths = {name: self._adapters[name].path for name in adapter_names}
+        return merge_adapters(adapter_paths, output_path, method=method, **kwargs)
+
     def __repr__(self) -> str:
         return f"AdapterRegistry(adapters={self.names})"
 
