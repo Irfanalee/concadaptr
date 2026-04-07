@@ -31,6 +31,7 @@ Base Model ─┬─ LoRA Adapter A (medical)    ──┐
 - **Model-agnostic** — Works with any HuggingFace transformer (Qwen, LLaMA, Mistral, Gemma, etc.)
 - **Privacy-preserving** — Customer data never leaves their environment; only adapters travel
 - **3 routing strategies** — Soft merging (MoLoRA), Top-K sparse routing (MixLoRA), X-LoRA learned scaling
+- **Routing in generation** — Per-layer routing hooks active during `model.generate()`, not just training
 - **Static merging fallback** — Linear, TIES, and DARE merging when routing overhead is undesirable
 - **HuggingFace Hub integration** — Push/pull adapters and full models to/from the Hub
 - **Full pipeline** — Train adapters → Concoct with router → Serve — one library
@@ -110,7 +111,23 @@ trainer.train()
 model.save_pretrained("./concocted_model")
 ```
 
-### 4. Analyze routing patterns
+### 4. Generate text
+
+```python
+# Routing hooks are active during generation — no extra setup needed
+output_ids = model.generate(
+    input_ids,
+    attention_mask=attention_mask,
+    max_new_tokens=256,
+    do_sample=True,
+    temperature=0.7,
+)
+text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+```
+
+The router runs once on the full prompt (Pass 1) to compute per-layer routing weights. Those weights are cached and applied as hooks at every generation step — compatible with KV-cache.
+
+### 5. Analyze routing patterns
 
 ```python
 from concadptr.utils import print_routing_summary
@@ -121,7 +138,7 @@ stats = model.router.get_routing_stats()
 print_routing_summary(stats, expert_names=["medical", "legal", "finance"])
 ```
 
-### 5. Serve
+### 6. Serve
 
 ```python
 from concadptr.serving import serve
@@ -278,7 +295,7 @@ pytest
 - [x] Routing visualization and analysis
 - [x] Static merging — Linear, TIES, DARE, DARE+TIES
 - [x] HuggingFace Hub push/pull (models and adapters)
-- [ ] Hook per-layer routing into the generation loop
+- [x] Per-layer routing hooks in generation loop (cached prompt routing, KV-cache compatible)
 - [ ] vLLM integration for high-throughput serving
 - [ ] Benchmarking suite across model families (Qwen2.5, LLaMA 3.1, Mistral)
 - [ ] Adapter version metadata and progressive merging pipeline

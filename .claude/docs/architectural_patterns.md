@@ -380,6 +380,55 @@ only what they need, and adding new fields is non-breaking. Training loss keys
 
 ---
 
+## 16. Two-Pass Forward with Persistent Hook Infrastructure
+
+**Files:** `concadptr/model.py` (`forward()`, `generate()`, `_register_lora_hooks()`, `_make_lora_hook()`, `_make_generation_hook()`)
+
+```python
+# Pass 1: base model only → per-layer hidden states
+with self.base_model.disable_adapter():
+    base_out = self.base_model(..., output_hidden_states=True)
+
+# Compute routing weights per layer
+layer_weights = [self.router(h.detach(), layer_idx=i) for i, h in enumerate(layer_hiddens)]
+routing_weights_all = torch.stack(layer_weights, dim=2)  # (batch, seq, num_layers, num_experts)
+
+# Pass 2: single forward with routing hooks active
+hooks = self._register_lora_hooks(routing_weights_all, self._make_lora_hook)
+try:
+    fwd_out = self.base_model(...)
+finally:
+    for h in hooks:
+        h.remove()
+```
+
+`_register_lora_hooks(weights, hook_factory)` centralises hook registration — used by both `forward()` and `generate()`. The `hook_factory` argument is either `_make_lora_hook` (training/forward, full seq weights) or `_make_generation_hook` (generation, cached last-token weights). Hooks are always removed in a `finally` block — even if an exception occurs.
+
+---
+
+## 17. Cached Prompt Routing for Generation
+
+**Files:** `concadptr/model.py` (`generate()`, `_make_generation_hook()`)
+
+```python
+@torch.no_grad()
+def generate(self, input_ids, attention_mask=None, **kwargs):
+    # Pass 1 on full prompt → routing weights
+    cached_routing = routing_weights_all[:, -1:, :, :]  # (batch, 1, num_layers, num_experts)
+
+    # Persistent hooks with cached weights — KV-cache compatible
+    hooks = self._register_lora_hooks(cached_routing, self._make_generation_hook)
+    try:
+        return self.base_model.generate(...)
+    finally:
+        for h in hooks:
+            h.remove()
+```
+
+`_make_generation_hook` receives `cached_weights` of shape `(batch, 1, num_layers, num_experts)`. Inside the hook, `weights = cached_weights[:, :, layer_idx, :]` is `(batch, 1, num_experts)` which broadcasts safely over any generation step input of shape `(batch, seq_step, hidden)` — including KV-cache steps where `seq_step=1`. The last token's routing weights serve as the routing proxy for all generated tokens.
+
+---
+
 ## 15. `_private` Attributes for Internal State
 
 **Files:** `concadptr/model.py`, `concadptr/router/base.py`, `concadptr/trainer.py`
