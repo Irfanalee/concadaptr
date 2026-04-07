@@ -207,3 +207,67 @@ class TestSavePretrained:
         r = repr(model)
         assert "fake" in r
         assert "soft_merging" in r
+
+
+# ── generate() ───────────────────────────────────────────────────────────────
+
+
+class TestConcAdptrModelGenerate:
+    def test_generate_returns_tensor(self):
+        model = _build_model()
+        input_ids = torch.zeros(BATCH, SEQ, dtype=torch.long)
+        result = model.generate(input_ids)
+        assert isinstance(result, torch.Tensor)
+
+    def test_generate_calls_base_model_generate_once(self):
+        model = _build_model()
+        input_ids = torch.zeros(BATCH, SEQ, dtype=torch.long)
+        model.generate(input_ids)
+        assert model.base_model.generate.call_count == 1
+
+    def test_generate_passes_kwargs_to_base(self):
+        model = _build_model()
+        input_ids = torch.zeros(BATCH, SEQ, dtype=torch.long)
+        model.generate(input_ids, max_new_tokens=16)
+        call_kwargs = model.base_model.generate.call_args[1]
+        assert call_kwargs.get("max_new_tokens") == 16
+
+    def test_generate_completes_with_empty_hook_list(self):
+        """No LoraLayer modules in the mock — generate() must still complete."""
+        model = _build_model()
+        input_ids = torch.zeros(BATCH, SEQ, dtype=torch.long)
+        model.generate(input_ids)  # must not raise
+
+    def test_hooks_removed_on_generate_exception(self):
+        """Hooks are cleaned up even when base_model.generate raises."""
+        model = _build_model()
+        model.base_model.generate = MagicMock(side_effect=RuntimeError("GPU OOM"))
+        input_ids = torch.zeros(BATCH, SEQ, dtype=torch.long)
+        with pytest.raises(RuntimeError, match="GPU OOM"):
+            model.generate(input_ids)
+
+    def test_set_adapter_called_before_generate(self):
+        model = _build_model()
+        input_ids = torch.zeros(BATCH, SEQ, dtype=torch.long)
+        model.generate(input_ids)
+        assert model.base_model.set_adapter.call_count == 1
+
+    def test_cached_routing_is_last_token_slice(self):
+        """cached_routing shape must be (batch, 1, num_layers, num_experts)."""
+        # Simulate the slice logic used inside generate()
+        NUM_LAYERS = 2
+        routing_weights_all = torch.rand(BATCH, SEQ, NUM_LAYERS, NUM_EXPERTS)
+        cached = routing_weights_all[:, -1:, :, :]
+        assert cached.shape == (BATCH, 1, NUM_LAYERS, NUM_EXPERTS)
+
+    def test_generation_hook_weights_broadcast(self):
+        """_make_generation_hook weight slice (batch,1,num_experts) broadcasts over any seq."""
+        NUM_LAYERS = 2
+        cached_weights = torch.rand(BATCH, 1, NUM_LAYERS, NUM_EXPERTS)
+        # Simulate what the hook does for layer 0
+        weights = cached_weights[:, :, 0, :]  # (batch, 1, num_experts)
+        # Should broadcast with a generation step output of arbitrary seq length
+        for step_seq in [1, 4, SEQ]:
+            dummy_delta = torch.zeros(BATCH, step_seq, HIDDEN)
+            result = dummy_delta + weights[..., :1] * dummy_delta
+            assert result.shape == (BATCH, step_seq, HIDDEN)

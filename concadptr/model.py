@@ -290,19 +290,7 @@ class ConcAdptrModel(nn.Module):
         routing_weights_all = torch.stack(layer_weights, dim=2)
 
         # ── Pass 2: single forward with LoRA routing hooks ───────────────────────
-        from peft.tuners.lora import LoraLayer
-
-        hooks = []
-        for module_name, module in self.base_model.named_modules():
-            if not isinstance(module, LoraLayer):
-                continue
-            layer_idx = self._extract_layer_idx(module_name)
-            hooks.append(
-                module.register_forward_hook(
-                    self._make_lora_hook(module, layer_idx, adapter_names, routing_weights_all)
-                )
-            )
-
+        hooks = self._register_lora_hooks(routing_weights_all, self._make_lora_hook)
         try:
             self.base_model.set_adapter(adapter_names[0])
             fwd_out = self.base_model(
@@ -341,6 +329,94 @@ class ConcAdptrModel(nn.Module):
             "load_balance_loss": lb_loss.detach(),
         }
 
+    def _register_lora_hooks(self, routing_weights_all: torch.Tensor, hook_factory) -> list:
+        """Register forward hooks on all LoraLayer modules.
+
+        Args:
+            routing_weights_all: Pre-computed routing weights tensor passed to each hook.
+            hook_factory: Callable matching the signature of _make_lora_hook or
+                _make_generation_hook — receives (module, layer_idx, adapter_names, weights).
+
+        Returns:
+            List of RemovableHook handles. Caller is responsible for removing them.
+        """
+        from peft.tuners.lora import LoraLayer
+
+        adapter_names = self.registry.names
+        hooks = []
+        for module_name, module in self.base_model.named_modules():
+            if not isinstance(module, LoraLayer):
+                continue
+            layer_idx = self._extract_layer_idx(module_name)
+            hooks.append(
+                module.register_forward_hook(
+                    hook_factory(module, layer_idx, adapter_names, routing_weights_all)
+                )
+            )
+        return hooks
+
+    @torch.no_grad()
+    def generate(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        """Autoregressive generation with cached per-layer routing.
+
+        Implements "cached prompt routing": runs Pass 1 on the full prompt to
+        compute routing weights, extracts the last token's weights as a fixed
+        routing representative for all generated tokens, registers persistent
+        hooks, then delegates to self.base_model.generate() with hooks active.
+
+        The last-token routing weights have shape (batch, 1, num_layers, num_experts)
+        and broadcast safely over any generation step input regardless of whether
+        KV-cache is active (seq_step = 1 per step) or not.
+
+        Args:
+            input_ids: Prompt token IDs, shape (batch, prompt_seq).
+            attention_mask: Attention mask for the prompt.
+            **kwargs: Forwarded to self.base_model.generate() (e.g. max_new_tokens,
+                temperature, do_sample, streamer, etc.).
+
+        Returns:
+            Generated token ID tensor as returned by base_model.generate().
+        """
+        adapter_names = self.registry.names
+        kwargs.pop("output_hidden_states", None)
+
+        # ── Pass 1: compute routing weights from the prompt ───────────────────
+        with self.base_model.disable_adapter():
+            base_out = self.base_model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_hidden_states=True,
+            )
+
+        layer_hiddens = base_out.hidden_states[1:]
+        layer_weights = [
+            self.router(h.detach(), layer_idx=i) for i, h in enumerate(layer_hiddens)
+        ]
+        # (batch, seq, num_layers, num_experts)
+        routing_weights_all = torch.stack(layer_weights, dim=2)
+
+        # Last token's routing as generation proxy → (batch, 1, num_layers, num_experts)
+        # Broadcasts safely over each generation step's input regardless of seq length.
+        cached_routing = routing_weights_all[:, -1:, :, :]
+
+        # ── Register persistent generation hooks ──────────────────────────────
+        hooks = self._register_lora_hooks(cached_routing, self._make_generation_hook)
+        try:
+            self.base_model.set_adapter(adapter_names[0])
+            return self.base_model.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                **kwargs,
+            )
+        finally:
+            for h in hooks:
+                h.remove()
+
     @staticmethod
     def _extract_layer_idx(module_name: str) -> int:
         """Parse the transformer layer index from a PEFT module name.
@@ -372,6 +448,51 @@ class ConcAdptrModel(nn.Module):
             x = inp[0]
             base_out = lora_module.base_layer(x)
             weights = routing_weights_all[:, :, layer_idx, :]  # (batch, seq, num_experts)
+
+            weighted_delta = torch.zeros_like(base_out)
+            for i, name in enumerate(adapter_names):
+                if name not in lora_module.lora_A:
+                    continue
+                lora_dropout = (
+                    lora_module.lora_dropout.get(name)
+                    if hasattr(lora_module, "lora_dropout")
+                    else None
+                )
+                x_in = lora_dropout(x) if lora_dropout is not None else x
+                delta = lora_module.lora_B[name](lora_module.lora_A[name](x_in))
+                delta = delta * lora_module.scaling[name]
+                weighted_delta = weighted_delta + weights[..., i : i + 1] * delta
+
+            return base_out + weighted_delta
+
+        return hook
+
+    @staticmethod
+    def _make_generation_hook(
+        lora_module,
+        layer_idx: int,
+        adapter_names: List[str],
+        cached_weights: torch.Tensor,
+    ):
+        """Return a forward hook for autoregressive generation with cached routing.
+
+        Identical to _make_lora_hook but designed for cached_weights of shape
+        (batch, 1, num_layers, num_experts). The seq=1 slice broadcasts over any
+        generation step input, making it KV-cache compatible.
+
+        Args:
+            lora_module: The PEFT LoraLayer whose output will be overridden.
+            layer_idx: Transformer layer index (indexes into cached_weights dim 2).
+            adapter_names: Ordered list of adapter names.
+            cached_weights: Shape (batch, 1, num_layers, num_experts) — last-token
+                routing weights from the prompt, fixed for the entire generation run.
+        """
+
+        def hook(module, inp, output):
+            x = inp[0]
+            base_out = lora_module.base_layer(x)
+            # (batch, 1, num_experts) — broadcasts over any seq_step
+            weights = cached_weights[:, :, layer_idx, :]
 
             weighted_delta = torch.zeros_like(base_out)
             for i, name in enumerate(adapter_names):

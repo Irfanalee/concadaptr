@@ -99,6 +99,10 @@ def make_mock_base_model(
 
     mock.set_adapter = MagicMock()
 
+    # generate() returns a plausible token ID tensor
+    generated_ids = torch.zeros(batch, seq + 4, dtype=torch.long)
+    mock.generate = MagicMock(return_value=generated_ids)
+
     # Support the disable_adapter() context manager used in the new 2-pass forward
     @contextmanager
     def _disable_adapter_ctx():
