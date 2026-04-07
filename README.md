@@ -1,4 +1,4 @@
-# 🧪 ConcAdptr
+# ConcAdptr
 
 **Concocting Adapters — Brew multiple LoRA adapters into Mixture-of-Experts systems.**
 
@@ -14,7 +14,7 @@ ConcAdptr takes independently trained LoRA adapters and concocts them into MoE-s
 
 ## The Problem
 
-You fine-tune a base model with LoRA for your product. Then each customer/user-group needs their own specialization — but they can't share their data. You end up with multiple LoRA adapters trained in isolation. How do you combine them into something smarter than any individual adapter?
+You fine-tune a base model with LoRA for your product. Then each customer or user-group needs their own specialization — but they can't share their data. You end up with multiple LoRA adapters trained in isolation. How do you combine them into something smarter than any individual adapter?
 
 ## The Solution
 
@@ -31,6 +31,8 @@ Base Model ─┬─ LoRA Adapter A (medical)    ──┐
 - **Model-agnostic** — Works with any HuggingFace transformer (Qwen, LLaMA, Mistral, Gemma, etc.)
 - **Privacy-preserving** — Customer data never leaves their environment; only adapters travel
 - **3 routing strategies** — Soft merging (MoLoRA), Top-K sparse routing (MixLoRA), X-LoRA learned scaling
+- **Static merging fallback** — Linear, TIES, and DARE merging when routing overhead is undesirable
+- **HuggingFace Hub integration** — Push/pull adapters and full models to/from the Hub
 - **Full pipeline** — Train adapters → Concoct with router → Serve — one library
 - **Production-ready** — FastAPI serving, adapter registry, compatibility validation
 - **Consumer GPU friendly** — 4-bit quantization, runs on 16GB VRAM
@@ -46,6 +48,7 @@ With optional dependencies:
 ```bash
 pip install concadptr[training]   # + bitsandbytes, trl
 pip install concadptr[serving]    # + fastapi, uvicorn
+pip install concadptr[hub]        # + huggingface_hub
 pip install concadptr[all]        # everything
 ```
 
@@ -80,14 +83,6 @@ config = ConcAdptrConfig.from_yaml("config.yaml")
 from concadptr import ConcAdptrModel
 
 model = ConcAdptrModel.from_config(config)
-print(model)
-# ConcAdptrModel(
-#   base_model='Qwen/Qwen2.5-7B-Instruct',
-#   num_adapters=3,
-#   adapter_names=['medical', 'legal', 'finance'],
-#   routing=xlora,
-#   trainable_params=263,168
-# )
 ```
 
 ### 3. Train the router
@@ -96,27 +91,22 @@ print(model)
 from concadptr import ConcAdptrTrainer
 from datasets import load_dataset, concatenate_datasets
 
-# Router training data: a MIX of domain samples (NOT customer data)
-# The router needs to see examples from different domains
-# so it learns which adapter helps with which type of input
-medical_samples = load_dataset("medical_qa", split="train[:500]")
-legal_samples = load_dataset("legal_docs", split="train[:500]")
-finance_samples = load_dataset("finance_qa", split="train[:500]")
+# Mix of domain samples — not customer data
+router_dataset = concatenate_datasets([
+    load_dataset("medical_qa", split="train[:500]"),
+    load_dataset("legal_docs", split="train[:500]"),
+    load_dataset("finance_qa", split="train[:500]"),
+])
 
-# Combine into one mixed dataset
-router_dataset = concatenate_datasets([medical_samples, legal_samples, finance_samples])
-# Use your general-purpose dataset (NOT customer data)
-#dataset = load_dataset("your_dataset")
 trainer = ConcAdptrTrainer(
-    model=model,  # This already has all 3 adapters loaded + the router
+    model=model,
     train_dataset=router_dataset,
-    eval_dataset=eval_dataset,
     learning_rate=1e-4,
     num_epochs=3,
     batch_size=4,
 )
 
-results = trainer.train()
+trainer.train()
 model.save_pretrained("./concocted_model")
 ```
 
@@ -131,25 +121,7 @@ stats = model.router.get_routing_stats()
 print_routing_summary(stats, expert_names=["medical", "legal", "finance"])
 ```
 
-Output:
-```
-ConcAdptr Routing Summary
-========================================
-Routing Entropy: 1.0234 / 1.0986 (max)
-Uniformity: 93.2%
-
-Expert Load:
-  medical              0.3841 ███████████████████
-  legal                0.3012 ███████████████
-  finance              0.3147 ███████████████
-
-Expert Utilization (top-2):
-  medical              0.8234 █████████████████████████████████████████
-  legal                0.6891 ██████████████████████████████████
-  finance              0.7102 ███████████████████████████████████
-```
-
-### 5. Serve (optional)
+### 5. Serve
 
 ```python
 from concadptr.serving import serve
@@ -171,29 +143,69 @@ curl -X POST http://localhost:8000/v1/completions \
 | `top_k` | Activate only top-k experts per token | Many experts (8+), distinct domains |
 | `xlora` | Learned scaling with frozen adapters, layer-wise | Independent adapters, privacy-critical |
 
+## Static Merging (No Router)
+
+When routing overhead is undesirable, merge adapters statically into a single PEFT adapter:
+
+```python
+from concadptr import merge_adapters
+
+# Linear weighted average
+output = merge_adapters(
+    adapters={"medical": "./adapters/medical", "legal": "./adapters/legal"},
+    output_path="./merged",
+    method="linear",       # "linear", "ties", "dare", "dare_ties"
+    weights=[0.6, 0.4],
+)
+
+# TIES — reduces interference between adapters
+output = merge_adapters(adapters=..., output_path="./merged", method="ties", trim_fraction=0.2)
+
+# DARE — stochastic drop + rescale before merging
+output = merge_adapters(adapters=..., output_path="./merged", method="dare", density=0.7)
+```
+
+Or via the registry:
+
+```python
+registry.merge(["medical", "legal"], output_path="./merged", method="ties")
+```
+
+The output is a standard PEFT adapter directory — usable with `PeftModel.from_pretrained()`.
+
+## HuggingFace Hub
+
+```python
+# Push a full concocted model
+model.push_to_hub("username/my-concocted-model", token="hf_...")
+
+# Load it back
+model = ConcAdptrModel.from_hub("username/my-concocted-model")
+
+# Push/pull individual adapters
+registry.push_adapter_to_hub("medical", repo_id="username/medical-adapter")
+registry.load_adapter_from_hub("username/medical-adapter", name="medical")
+```
+
 ## Architecture
 
 ```
 ┌──────────────────────────────────────────────┐
-│                 ConcAdptrModel                │
+│                 ConcAdptrModel               │
 │                                              │
 │  ┌──────────┐  ┌───────────────────────────┐ │
-│  │   Base    │  │     Adapter Registry      │ │
-│  │  Model    │  │  ┌─────┐ ┌─────┐ ┌─────┐ │ │
-│  │ (frozen)  │  │  │LoRA │ │LoRA │ │LoRA │ │ │
-│  │           │  │  │  A  │ │  B  │ │  C  │ │ │
-│  │           │  │  │froze│ │froze│ │froze│ │ │
+│  │   Base   │  │     Adapter Registry      │ │
+│  │  Model   │  │  ┌─────┐ ┌─────┐ ┌─────┐ │ │
+│  │ (frozen) │  │  │LoRA │ │LoRA │ │LoRA │ │ │
+│  │          │  │  │  A  │ │  B  │ │  C  │ │ │
+│  │          │  │  │froze│ │froze│ │froze│ │ │
 │  └──────────┘  │  └──┬──┘ └──┬──┘ └──┬──┘ │ │
-│                │     │       │       │     │ │
 │                └─────┼───────┼───────┼─────┘ │
 │                      │       │       │       │
 │                ┌─────▼───────▼───────▼─────┐ │
 │                │         Router            │ │
 │                │       (trainable)         │ │
-│                │  ┌──────────────────────┐ │ │
-│                │  │   Gating Network     │ │ │
-│                │  └──────────┬───────────┘ │ │
-│                └─────────────┼─────────────┘ │
+│                └─────────────┬─────────────┘ │
 │                              │               │
 │                    ┌─────────▼─────────┐     │
 │                    │ Concocted Output  │     │
@@ -218,7 +230,7 @@ Customer data never leaves their environment. The router learns which expert(s) 
 concadptr/
 ├── concadptr/
 │   ├── __init__.py          # Public API
-│   ├── config.py            # Configuration classes
+│   ├── config.py            # Configuration classes (ConcAdptrConfig, MergeConfig, ...)
 │   ├── model.py             # ConcAdptrModel (core)
 │   ├── trainer.py           # ConcAdptrTrainer (router training)
 │   ├── router/
@@ -228,16 +240,21 @@ concadptr/
 │   │   └── xlora.py         # Learned scaling (X-LoRA)
 │   ├── adapters/
 │   │   └── __init__.py      # AdapterRegistry
+│   ├── merging/
+│   │   ├── __init__.py      # merge_adapters() functional API
+│   │   ├── base.py          # AdapterMerger ABC
+│   │   ├── linear.py        # Weighted average
+│   │   ├── ties.py          # TIES (Trim, Elect Sign, Merge)
+│   │   ├── dare.py          # DARE (Drop And REscale)
+│   │   └── utils.py         # Weight loading utilities
 │   ├── serving/
 │   │   └── server.py        # FastAPI inference server
 │   └── utils/
 │       └── visualization.py # Routing analysis tools
 ├── tests/
-│   └── test_core.py         # Unit tests
 ├── examples/
-│   └── config.yaml          # Example configuration
+│   └── config.yaml
 ├── pyproject.toml
-├── LICENSE
 └── README.md
 ```
 
@@ -254,25 +271,28 @@ pytest
 
 - [x] Core library architecture
 - [x] 3 routing strategies (soft, top-k, X-LoRA)
+- [x] Per-layer routing hooks (2-pass forward with LoRA delta weighting)
 - [x] Adapter registry with compatibility validation
 - [x] Router training pipeline
 - [x] FastAPI serving
 - [x] Routing visualization and analysis
-- [ ] Full generation loop with per-layer routing hooks
-- [ ] Integration with vLLM for high-throughput serving
-- [ ] Adapter merging (linear, TIES, DARE) as fallback
-- [ ] Hugging Face Hub adapter upload/download
-- [ ] Benchmarking suite across model families
-- [ ] Distributed router training
+- [x] Static merging — Linear, TIES, DARE, DARE+TIES
+- [x] HuggingFace Hub push/pull (models and adapters)
+- [ ] Hook per-layer routing into the generation loop
+- [ ] vLLM integration for high-throughput serving
+- [ ] Benchmarking suite across model families (Qwen2.5, LLaMA 3.1, Mistral)
+- [ ] Adapter version metadata and progressive merging pipeline
+- [ ] Federated LoRA training (FedAvg on adapter weights)
 
 ## References
 
 - Hu et al. (2021) — [LoRA: Low-Rank Adaptation of Large Language Models](https://arxiv.org/abs/2106.09685)
 - Zadouri et al. (2023) — [Pushing Mixture of Experts to the Limit (MoLoRA)](https://arxiv.org/abs/2309.05444)
+- Yadav et al. (2023) — [TIES-Merging: Resolving Interference When Merging Models](https://arxiv.org/abs/2306.01708)
+- Yu et al. (2023) — [Language Models are Super Mario (DARE)](https://arxiv.org/abs/2311.03099)
 - Wu et al. (2024) — [Mixture of LoRA Experts (MoLE)](https://arxiv.org/abs/2404.13628)
 - Li et al. (2024) — [MixLoRA](https://arxiv.org/abs/2404.15159)
 - Buehler & Buehler (2024) — [X-LoRA: Mixture of Low-Rank Adapter Experts](https://github.com/EricLBuehler/xlora)
-- Zhuang et al. (2025) — [LD-MoLE: Learnable Dynamic Routing for MoLE](https://arxiv.org/abs/2509.25684)
 
 ## License
 
@@ -280,9 +300,7 @@ Apache 2.0 — see [LICENSE](LICENSE) for details.
 
 ## Author
 
-**Irfan Ali** — [GitHub](https://github.com/irfanalee) · [HuggingFace](https://huggingface.co/irfanalee) · [LinkedIn](https://linkedin.com/in/irfanalii)
-
-
+**Irfan Ali** — [GitHub](https://github.com/irfanalee) · [HuggingFace](https://huggingface.co/irfanalee)
 
 ---
 
