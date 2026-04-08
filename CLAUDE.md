@@ -102,10 +102,11 @@ The forward pass works like this:
 **Completed:**
 - ~~Per-layer routing hook~~ — 2-pass forward with per-layer LoRA delta weighting via hooks
 - ~~HuggingFace Hub upload/download~~ — `push_to_hub`, `from_hub`, `push_adapter_to_hub`, `load_adapter_from_hub`
+- ~~Hook per-layer routing into the generation loop~~ — cached prompt routing in `generate()` via persistent hooks
+- ~~Static adapter merging~~ — Linear, TIES, DARE, DARE+TIES via `concadptr.merging`
 
 **Serving:**
 - vLLM integration for high-throughput multi-LoRA serving (§6.2 in research paper)
-- Hook per-layer routing into the generation loop (currently only forward pass, not `generate()`)
 
 **Adapter Merging (Static Fallback):**
 - Linear weighted merging — weighted average of adapter deltas (§5.1)
