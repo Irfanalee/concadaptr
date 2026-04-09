@@ -8,13 +8,16 @@ checking, and lazy loading.
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Union
 
 logger = logging.getLogger(__name__)
+
+_VERSION_FILE = "concadptr_version.json"
 
 
 @dataclass
@@ -30,6 +33,13 @@ class AdapterInfo:
         target_modules: Which model modules this adapter targets.
         loaded: Whether the adapter weights are currently in memory.
         metadata: Additional user-defined metadata.
+        hub_repo_id: HuggingFace Hub repo ID if loaded from Hub.
+        version: Semantic version string set by the user (e.g. "1.2.0").
+        created_at: ISO 8601 timestamp of when the adapter was produced.
+        training_config_hash: SHA-256 of the training configuration dict,
+            computed via AdapterInfo.compute_config_hash().
+        eval_metrics: Task-specific evaluation results, e.g.
+            {"mmlu_accuracy": 0.72, "rouge1": 0.45}.
     """
 
     name: str
@@ -37,10 +47,104 @@ class AdapterInfo:
     base_model: str = ""
     rank: int = 0
     alpha: int = 0
-    target_modules: List[str] = field(default_factory=list)
+    target_modules: list[str] = field(default_factory=list)
     loaded: bool = False
-    metadata: Dict = field(default_factory=dict)
-    hub_repo_id: Optional[str] = None  # Set when adapter was pulled from HF Hub
+    metadata: dict = field(default_factory=dict)
+    hub_repo_id: str | None = None
+
+    # Version metadata (§7.3)
+    version: str | None = None
+    created_at: str | None = None
+    training_config_hash: str | None = None
+    eval_metrics: dict[str, float] = field(default_factory=dict)
+
+    @staticmethod
+    def compute_config_hash(config) -> str:
+        """Compute a deterministic SHA-256 hash of a training configuration.
+
+        Accepts either a plain dict or any dataclass instance (e.g.
+        ``TrainingConfig``). Keys are sorted before hashing so field order
+        does not affect the result.
+
+        Args:
+            config: A dict or dataclass instance representing the training config.
+
+        Returns:
+            64-character lowercase hex SHA-256 digest.
+
+        Raises:
+            TypeError: If config is not a dict or dataclass instance.
+        """
+        if dataclasses.is_dataclass(config) and not isinstance(config, type):
+            config_dict = dataclasses.asdict(config)
+        elif isinstance(config, dict):
+            config_dict = config
+        else:
+            raise TypeError(
+                f"Expected a dict or dataclass instance, got {type(config).__name__}"
+            )
+        serialized = json.dumps(config_dict, sort_keys=True, default=str)
+        return hashlib.sha256(serialized.encode()).hexdigest()
+
+    def save_version_metadata(self, path: str | Path | None = None) -> Path:
+        """Write version metadata to ``concadptr_version.json``.
+
+        Only non-None / non-empty fields are written, so the file stays
+        minimal. Existing keys not present on this AdapterInfo are
+        preserved.
+
+        Args:
+            path: Override save location. Defaults to
+                ``{self.path}/concadptr_version.json``.
+
+        Returns:
+            Path to the saved file.
+        """
+        target = Path(path) if path is not None else Path(self.path) / _VERSION_FILE
+
+        # Preserve any unknown keys already in the file
+        existing: dict = {}
+        if target.exists():
+            with open(target) as f:
+                existing = json.load(f)
+
+        if self.version is not None:
+            existing["version"] = self.version
+        if self.created_at is not None:
+            existing["created_at"] = self.created_at
+        if self.training_config_hash is not None:
+            existing["training_config_hash"] = self.training_config_hash
+        if self.eval_metrics:
+            existing["eval_metrics"] = self.eval_metrics
+
+        with open(target, "w") as f:
+            json.dump(existing, f, indent=2)
+
+        logger.debug(f"Version metadata saved to {target}")
+        return target
+
+    @classmethod
+    def _load_version_fields(cls, path: Path) -> dict:
+        """Read version metadata from a concadptr_version.json file.
+
+        Args:
+            path: Adapter directory containing the version file.
+
+        Returns:
+            Dict with keys version, created_at, training_config_hash,
+            eval_metrics (all optional). Empty dict if the file is absent.
+        """
+        version_file = path / _VERSION_FILE
+        if not version_file.exists():
+            return {}
+        with open(version_file) as f:
+            data = json.load(f)
+        return {
+            "version": data.get("version"),
+            "created_at": data.get("created_at"),
+            "training_config_hash": data.get("training_config_hash"),
+            "eval_metrics": data.get("eval_metrics", {}),
+        }
 
 
 class AdapterRegistry:
@@ -59,15 +163,19 @@ class AdapterRegistry:
     """
 
     def __init__(self):
-        self._adapters: Dict[str, AdapterInfo] = {}
+        self._adapters: dict[str, AdapterInfo] = {}
 
     def register(
         self,
         name: str,
-        path: Union[str, Path],
-        metadata: Optional[Dict] = None,
+        path: str | Path,
+        metadata: dict | None = None,
     ) -> AdapterInfo:
         """Register a LoRA adapter with the registry.
+
+        If a ``concadptr_version.json`` file exists in the adapter directory,
+        its version, created_at, training_config_hash, and eval_metrics are
+        loaded automatically.
 
         Args:
             name: Unique name for this adapter.
@@ -102,6 +210,9 @@ class AdapterRegistry:
         with open(config_path) as f:
             config = json.load(f)
 
+        # Load version metadata if present
+        ver = AdapterInfo._load_version_fields(path)
+
         info = AdapterInfo(
             name=name,
             path=str(path),
@@ -110,6 +221,10 @@ class AdapterRegistry:
             alpha=config.get("lora_alpha", 0),
             target_modules=config.get("target_modules", []),
             metadata=metadata or {},
+            version=ver.get("version"),
+            created_at=ver.get("created_at"),
+            training_config_hash=ver.get("training_config_hash"),
+            eval_metrics=ver.get("eval_metrics", {}),
         )
 
         # Check for weight files
@@ -130,8 +245,8 @@ class AdapterRegistry:
         return info
 
     def register_from_dict(
-        self, adapters: Dict[str, str], metadata: Optional[Dict[str, Dict]] = None
-    ) -> List[AdapterInfo]:
+        self, adapters: dict[str, str], metadata: dict[str, dict] | None = None
+    ) -> list[AdapterInfo]:
         """Register multiple adapters from a name→path dictionary.
 
         Args:
@@ -174,8 +289,32 @@ class AdapterRegistry:
             )
         return self._adapters[name]
 
+    def set_eval_metrics(
+        self,
+        name: str,
+        metrics: dict[str, float],
+        save: bool = True,
+    ) -> None:
+        """Update the evaluation metrics for a registered adapter.
+
+        Merges new metrics into the existing eval_metrics dict (does not
+        replace). Optionally persists them to ``concadptr_version.json``
+        in the adapter directory so they survive re-registration.
+
+        Args:
+            name: Name of the registered adapter.
+            metrics: Metric name → value pairs to merge in.
+                E.g. {"mmlu_accuracy": 0.72, "rouge1": 0.45}.
+            save: If True, write updated metadata to disk immediately.
+        """
+        info = self.get(name)
+        info.eval_metrics.update(metrics)
+        if save:
+            info.save_version_metadata()
+        logger.info(f"Updated eval metrics for '{name}': {metrics}")
+
     @property
-    def names(self) -> List[str]:
+    def names(self) -> list[str]:
         """List of all registered adapter names."""
         return list(self._adapters.keys())
 
@@ -262,6 +401,15 @@ class AdapterRegistry:
             lines.append(f"    Alpha:   {info.alpha}")
             lines.append(f"    Modules: {', '.join(info.target_modules) or '(unspecified)'}")
             lines.append(f"    Loaded:  {info.loaded}")
+            if info.version:
+                lines.append(f"    Version: {info.version}")
+            if info.created_at:
+                lines.append(f"    Created: {info.created_at}")
+            if info.training_config_hash:
+                lines.append(f"    Config:  {info.training_config_hash[:16]}...")
+            if info.eval_metrics:
+                metrics_str = ", ".join(f"{k}={v:.4f}" for k, v in info.eval_metrics.items())
+                lines.append(f"    Metrics: {metrics_str}")
             if info.metadata:
                 lines.append(f"    Meta:    {info.metadata}")
 
@@ -271,15 +419,15 @@ class AdapterRegistry:
         self,
         name: str,
         repo_id: str,
-        token: Optional[str] = None,
+        token: str | None = None,
         private: bool = False,
-        commit_message: Optional[str] = None,
+        commit_message: str | None = None,
     ) -> str:
         """Upload an adapter to the HuggingFace Hub.
 
-        The adapter directory (adapter_config.json + weights) is uploaded
-        as a standard PEFT adapter repo so it can be loaded by anyone with
-        PeftModel.from_pretrained().
+        The adapter directory (adapter_config.json + weights +
+        concadptr_version.json if present) is uploaded as a standard PEFT
+        adapter repo.
 
         Args:
             name: Name of the registered adapter to push.
@@ -314,9 +462,9 @@ class AdapterRegistry:
     def load_adapter_from_hub(
         self,
         repo_id: str,
-        name: Optional[str] = None,
-        token: Optional[str] = None,
-        cache_dir: Optional[str] = None,
+        name: str | None = None,
+        token: str | None = None,
+        cache_dir: str | None = None,
     ) -> AdapterInfo:
         """Download an adapter from the HuggingFace Hub and register it.
 
@@ -352,8 +500,8 @@ class AdapterRegistry:
 
     def merge(
         self,
-        adapter_names: List[str],
-        output_path: Union[str, Path],
+        adapter_names: list[str],
+        output_path: str | Path,
         method: str = "linear",
         **kwargs,
     ) -> Path:
@@ -371,8 +519,6 @@ class AdapterRegistry:
         Returns:
             Path to the saved merged adapter directory.
         """
-        from pathlib import Path as _Path
-
         from concadptr.merging import merge_adapters
 
         # Validate that all requested adapters are registered

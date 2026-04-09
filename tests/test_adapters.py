@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from concadptr.adapters import AdapterRegistry
+from concadptr.adapters import AdapterInfo, AdapterRegistry
 
 
 class TestAdapterRegistry:
@@ -131,3 +131,146 @@ class TestAdapterRegistry:
         registry = AdapterRegistry()
         registry.register("solo", adapter_dir("solo"))
         assert registry.validate_compatibility() is True
+
+
+class TestAdapterVersionMetadata:
+    def test_new_fields_default_to_none_or_empty(self, adapter_dir):
+        registry = AdapterRegistry()
+        info = registry.register("a", adapter_dir("a"))
+        assert info.version is None
+        assert info.created_at is None
+        assert info.training_config_hash is None
+        assert info.eval_metrics == {}
+
+    def test_compute_config_hash_is_deterministic(self):
+        config = {"learning_rate": 1e-4, "num_epochs": 3, "batch_size": 4}
+        h1 = AdapterInfo.compute_config_hash(config)
+        h2 = AdapterInfo.compute_config_hash(config)
+        assert h1 == h2
+        assert len(h1) == 64  # SHA-256 hex digest
+
+    def test_compute_config_hash_differs_for_different_configs(self):
+        h1 = AdapterInfo.compute_config_hash({"lr": 1e-4})
+        h2 = AdapterInfo.compute_config_hash({"lr": 1e-3})
+        assert h1 != h2
+
+    def test_compute_config_hash_accepts_dataclass(self):
+        from dataclasses import dataclass
+
+        @dataclass
+        class FakeConfig:
+            lr: float = 1e-4
+            epochs: int = 3
+
+        h = AdapterInfo.compute_config_hash(FakeConfig())
+        assert isinstance(h, str) and len(h) == 64
+
+    def test_compute_config_hash_raises_for_invalid_type(self):
+        with pytest.raises(TypeError):
+            AdapterInfo.compute_config_hash("not_a_dict_or_dataclass")
+
+    def test_save_version_metadata_creates_file(self, adapter_dir, tmp_path):
+        path = adapter_dir("a")
+        registry = AdapterRegistry()
+        info = registry.register("a", path)
+        info.version = "1.0.0"
+        info.eval_metrics = {"mmlu": 0.72}
+        info.save_version_metadata()
+
+        version_file = path / "concadptr_version.json"
+        assert version_file.exists()
+        data = json.loads(version_file.read_text())
+        assert data["version"] == "1.0.0"
+        assert data["eval_metrics"]["mmlu"] == pytest.approx(0.72)
+
+    def test_save_version_metadata_custom_path(self, adapter_dir, tmp_path):
+        path = adapter_dir("a")
+        registry = AdapterRegistry()
+        info = registry.register("a", path)
+        info.version = "2.0.0"
+        target = tmp_path / "ver.json"
+        info.save_version_metadata(path=target)
+        assert target.exists()
+
+    def test_save_version_metadata_preserves_existing_keys(self, adapter_dir):
+        path = adapter_dir("a")
+        version_file = path / "concadptr_version.json"
+        version_file.write_text(json.dumps({"custom_key": "kept"}))
+
+        registry = AdapterRegistry()
+        info = registry.register("a", path)
+        info.version = "1.1.0"
+        info.save_version_metadata()
+
+        data = json.loads(version_file.read_text())
+        assert data["custom_key"] == "kept"
+        assert data["version"] == "1.1.0"
+
+    def test_register_loads_version_metadata_automatically(self, adapter_dir):
+        path = adapter_dir("a")
+        version_file = path / "concadptr_version.json"
+        version_file.write_text(
+            json.dumps({
+                "version": "3.0.0",
+                "created_at": "2026-04-09T00:00:00",
+                "training_config_hash": "abc123",
+                "eval_metrics": {"accuracy": 0.88},
+            })
+        )
+
+        registry = AdapterRegistry()
+        info = registry.register("a", path)
+
+        assert info.version == "3.0.0"
+        assert info.created_at == "2026-04-09T00:00:00"
+        assert info.training_config_hash == "abc123"
+        assert info.eval_metrics["accuracy"] == pytest.approx(0.88)
+
+    def test_register_without_version_file_still_works(self, adapter_dir):
+        path = adapter_dir("a")
+        registry = AdapterRegistry()
+        info = registry.register("a", path)
+        assert info.version is None
+        assert info.eval_metrics == {}
+
+    def test_set_eval_metrics_updates_info(self, adapter_dir):
+        registry = AdapterRegistry()
+        registry.register("a", adapter_dir("a"))
+        registry.set_eval_metrics("a", {"mmlu": 0.70, "hellaswag": 0.75}, save=False)
+        info = registry.get("a")
+        assert info.eval_metrics["mmlu"] == pytest.approx(0.70)
+        assert info.eval_metrics["hellaswag"] == pytest.approx(0.75)
+
+    def test_set_eval_metrics_merges_not_replaces(self, adapter_dir):
+        registry = AdapterRegistry()
+        registry.register("a", adapter_dir("a"))
+        registry.set_eval_metrics("a", {"mmlu": 0.70}, save=False)
+        registry.set_eval_metrics("a", {"hellaswag": 0.80}, save=False)
+        info = registry.get("a")
+        assert "mmlu" in info.eval_metrics
+        assert "hellaswag" in info.eval_metrics
+
+    def test_set_eval_metrics_saves_to_disk(self, adapter_dir):
+        path = adapter_dir("a")
+        registry = AdapterRegistry()
+        registry.register("a", path)
+        registry.set_eval_metrics("a", {"accuracy": 0.65}, save=True)
+        version_file = path / "concadptr_version.json"
+        assert version_file.exists()
+        data = json.loads(version_file.read_text())
+        assert data["eval_metrics"]["accuracy"] == pytest.approx(0.65)
+
+    def test_set_eval_metrics_raises_for_unknown_adapter(self):
+        registry = AdapterRegistry()
+        with pytest.raises(KeyError):
+            registry.set_eval_metrics("nonexistent", {"acc": 0.5})
+
+    def test_summary_includes_version_and_metrics(self, adapter_dir):
+        path = adapter_dir("a")
+        registry = AdapterRegistry()
+        info = registry.register("a", path)
+        info.version = "1.0.0"
+        info.eval_metrics = {"accuracy": 0.72}
+        summary = registry.summary()
+        assert "1.0.0" in summary
+        assert "accuracy" in summary
