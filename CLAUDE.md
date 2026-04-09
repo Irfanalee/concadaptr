@@ -104,6 +104,7 @@ The forward pass works like this:
 - ~~HuggingFace Hub upload/download~~ — `push_to_hub`, `from_hub`, `push_adapter_to_hub`, `load_adapter_from_hub`
 - ~~Hook per-layer routing into the generation loop~~ — cached prompt routing in `generate()` via persistent hooks
 - ~~Static adapter merging~~ — Linear, TIES, DARE, DARE+TIES via `concadptr.merging`
+- ~~Benchmarking suite~~ — MMLU, HellaSwag (log-prob scoring), BLEU/ROUGE generation, per-adapter A/B comparison, forgetting check via `concadptr.benchmarks`
 
 **Serving:**
 - vLLM integration for high-throughput multi-LoRA serving (§6.2 in research paper)
@@ -115,10 +116,10 @@ The forward pass works like this:
 - Recommended: implement via `mergekit` integration or native PyTorch
 
 **Evaluation & Benchmarking:**
-- Benchmarking suite across model families (Qwen2.5, LLaMA 3.1, Mistral) (§9.3)
-- Task-specific metrics (accuracy, F1, BLEU/ROUGE)
-- General capability benchmarks to detect catastrophic forgetting (MMLU, HellaSwag)
-- Per-adapter A/B comparison tooling
+- ~~Benchmarking suite across model families (Qwen2.5, LLaMA 3.1, Mistral)~~ — `BenchmarkRunner`, `BenchmarkConfig`, `BenchmarkResult` in `concadptr/benchmarks/`
+- ~~Task-specific metrics (accuracy, F1, BLEU/ROUGE)~~ — `concadptr/benchmarks/metrics.py`
+- ~~General capability benchmarks to detect catastrophic forgetting (MMLU, HellaSwag)~~ — `forgetting_check()` on `BenchmarkRunner`
+- ~~Per-adapter A/B comparison tooling~~ — `compare()` on `BenchmarkRunner`
 
 **Adapter Lifecycle:**
 - Adapter version metadata (base model version, training config hash, eval metrics) (§7.3)

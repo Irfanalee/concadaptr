@@ -33,6 +33,7 @@ from concadptr.router import (
 from concadptr.adapters import AdapterRegistry
 from concadptr.merging import merge_adapters
 from concadptr.trainer import ConcAdptrTrainer
+from concadptr.benchmarks import BenchmarkConfig, BenchmarkResult, BenchmarkRunner
 
 __all__ = [
     # Core
@@ -52,4 +53,8 @@ __all__ = [
     "MergeConfig",
     # Training
     "ConcAdptrTrainer",
+    # Benchmarking
+    "BenchmarkRunner",
+    "BenchmarkConfig",
+    "BenchmarkResult",
 ]
