@@ -33,6 +33,8 @@ Base Model ─┬─ LoRA Adapter A (medical)    ──┐
 - **3 routing strategies** — Soft merging (MoLoRA), Top-K sparse routing (MixLoRA), X-LoRA learned scaling
 - **Routing in generation** — Per-layer routing hooks active during `model.generate()`, not just training
 - **Static merging fallback** — Linear, TIES, and DARE merging when routing overhead is undesirable
+- **Benchmarking suite** — MMLU, HellaSwag, BLEU/ROUGE; A/B adapter comparison and forgetting detection
+- **Adapter version metadata** — track version, training config hash, and eval metrics per adapter
 - **HuggingFace Hub integration** — Push/pull adapters and full models to/from the Hub
 - **Full pipeline** — Train adapters → Concoct with router → Serve — one library
 - **Production-ready** — FastAPI serving, adapter registry, compatibility validation
@@ -47,10 +49,11 @@ pip install concadptr
 With optional dependencies:
 
 ```bash
-pip install concadptr[training]   # + bitsandbytes, trl
-pip install concadptr[serving]    # + fastapi, uvicorn
-pip install concadptr[hub]        # + huggingface_hub
-pip install concadptr[all]        # everything
+pip install concadptr[training]    # + bitsandbytes, trl
+pip install concadptr[serving]     # + fastapi, uvicorn
+pip install concadptr[hub]         # + huggingface_hub
+pip install concadptr[benchmarks]  # + evaluate (for BLEU/ROUGE scoring)
+pip install concadptr[all]         # everything
 ```
 
 ## Quick Start
@@ -190,6 +193,98 @@ registry.merge(["medical", "legal"], output_path="./merged", method="ties")
 
 The output is a standard PEFT adapter directory — usable with `PeftModel.from_pretrained()`.
 
+## Benchmarking
+
+Evaluate adapter quality, detect catastrophic forgetting, and compare model variants side by side.
+
+```python
+from concadptr import BenchmarkRunner, BenchmarkConfig
+
+config = BenchmarkConfig(
+    tasks=["mmlu", "hellaswag"],
+    num_samples=200,           # None = full dataset
+    output_dir="./bench_out",  # optional JSON output
+)
+runner = BenchmarkRunner(model, config)
+```
+
+**Evaluate the routed model:**
+
+```python
+results = runner.run()
+# [BenchmarkResult(task="mmlu", metrics={"accuracy": 0.71}, ...),
+#  BenchmarkResult(task="hellaswag", metrics={"accuracy": 0.78}, ...)]
+```
+
+**Compare base model, each adapter, and full routing:**
+
+```python
+comparison = runner.compare()
+# {
+#   "base":              [BenchmarkResult(task="mmlu", ...), ...],
+#   "medical":           [BenchmarkResult(task="mmlu", ...), ...],
+#   "legal":             [...],
+#   "concadptr_routed":  [...],
+# }
+```
+
+**Detect catastrophic forgetting:**
+
+```python
+deltas = runner.forgetting_check()
+# {
+#   "mmlu":      {"base": 0.68, "routed": 0.67, "delta": -0.01},
+#   "hellaswag": {"base": 0.79, "routed": 0.78, "delta": -0.01},
+# }
+```
+
+**Custom generation task with BLEU/ROUGE** (requires `pip install concadptr[benchmarks]`):
+
+```python
+config = BenchmarkConfig(
+    tasks=["generation"],
+    generation_dataset="my_org/qa_dataset",
+    generation_input_field="question",
+    generation_reference_field="answer",
+    generation_metrics=["bleu", "rouge"],
+    num_samples=100,
+)
+results = runner.run()
+# BenchmarkResult(metrics={"bleu": 34.1, "rouge1": 0.52, "rouge2": 0.28, "rougeL": 0.49})
+```
+
+## Adapter Version Metadata
+
+Track provenance and quality for each adapter — version, training config hash, and eval metrics — stored as a sidecar `concadptr_version.json` alongside the adapter weights.
+
+```python
+from concadptr.adapters import AdapterInfo
+
+# Hash a training config for reproducibility tracking
+config_hash = AdapterInfo.compute_config_hash({
+    "learning_rate": 1e-4,
+    "num_epochs": 3,
+    "batch_size": 4,
+    "lora_rank": 16,
+})
+
+# Store eval results on a registered adapter
+registry.set_eval_metrics("medical", {"mmlu": 0.72, "hellaswag": 0.75}, save=True)
+
+# Read back
+info = registry.get("medical")
+print(info.version)              # "1.2.0"
+print(info.eval_metrics)         # {"mmlu": 0.72, "hellaswag": 0.75}
+print(info.training_config_hash) # "3a8f1c..."
+
+# Persist manually after setting fields
+info.version = "1.3.0"
+info.training_config_hash = config_hash
+info.save_version_metadata()
+```
+
+Version metadata is loaded automatically when you call `registry.register()` — no extra steps needed if `concadptr_version.json` is present in the adapter directory.
+
 ## HuggingFace Hub
 
 ```python
@@ -256,7 +351,13 @@ concadptr/
 │   │   ├── top_k.py         # Sparse top-k routing (MixLoRA)
 │   │   └── xlora.py         # Learned scaling (X-LoRA)
 │   ├── adapters/
-│   │   └── __init__.py      # AdapterRegistry
+│   │   └── __init__.py      # AdapterRegistry, AdapterInfo (version metadata)
+│   ├── benchmarks/
+│   │   ├── __init__.py      # BenchmarkRunner, BenchmarkConfig, BenchmarkResult
+│   │   ├── config.py        # BenchmarkConfig, BenchmarkResult dataclasses
+│   │   ├── metrics.py       # accuracy, f1_score, bleu, rouge
+│   │   ├── tasks.py         # MMLUTask, HellaSwagTask, GenerationTask
+│   │   └── runner.py        # BenchmarkRunner
 │   ├── merging/
 │   │   ├── __init__.py      # merge_adapters() functional API
 │   │   ├── base.py          # AdapterMerger ABC
@@ -296,9 +397,10 @@ pytest
 - [x] Static merging — Linear, TIES, DARE, DARE+TIES
 - [x] HuggingFace Hub push/pull (models and adapters)
 - [x] Per-layer routing hooks in generation loop (cached prompt routing, KV-cache compatible)
+- [x] Benchmarking suite — MMLU, HellaSwag, BLEU/ROUGE, A/B comparison, forgetting check
+- [x] Adapter version metadata — version, training config hash, eval metrics, sidecar auto-load
+- [ ] Progressive merging pipeline — incremental adapter integration with quality gating
 - [ ] vLLM integration for high-throughput serving
-- [ ] Benchmarking suite across model families (Qwen2.5, LLaMA 3.1, Mistral)
-- [ ] Adapter version metadata and progressive merging pipeline
 - [ ] Federated LoRA training (FedAvg on adapter weights)
 
 ## References
