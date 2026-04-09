@@ -31,7 +31,13 @@ from concadptr.router import (
     XLoRARouter,
 )
 from concadptr.adapters import AdapterRegistry
-from concadptr.merging import merge_adapters
+from concadptr.merging import (
+    merge_adapters,
+    MergeResult,
+    ProgressiveMerger,
+    ProgressiveMergerConfig,
+    QualityGateError,
+)
 from concadptr.trainer import ConcAdptrTrainer
 from concadptr.benchmarks import BenchmarkConfig, BenchmarkResult, BenchmarkRunner
 
@@ -51,6 +57,10 @@ __all__ = [
     # Merging
     "merge_adapters",
     "MergeConfig",
+    "ProgressiveMerger",
+    "ProgressiveMergerConfig",
+    "MergeResult",
+    "QualityGateError",
     # Training
     "ConcAdptrTrainer",
     # Benchmarking

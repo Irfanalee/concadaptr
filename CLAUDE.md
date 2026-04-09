@@ -123,7 +123,7 @@ The forward pass works like this:
 
 **Adapter Lifecycle:**
 - Adapter version metadata (base model version, training config hash, eval metrics) (§7.3)
-- Progressive merging pipeline — incremental adapter integration with quality gating (§7.1)
+- ~~Progressive merging pipeline~~ — `ProgressiveMerger` with `QualityGateError`, quality gating via `BenchmarkRunner.forgetting_check()`, integrates with `merge_adapters()` (§7.1)
 
 **Advanced (Future):**
 - Federated LoRA training (FedAvg on adapter weights) (§11)

@@ -18,11 +18,11 @@ Example:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Optional, Union
 
 from .base import AdapterMerger
 from .dare import DAREMerge
 from .linear import LinearMerge
+from .progressive import MergeResult, ProgressiveMerger, ProgressiveMergerConfig, QualityGateError
 from .ties import TIESMerge
 
 __all__ = [
@@ -31,14 +31,18 @@ __all__ = [
     "LinearMerge",
     "TIESMerge",
     "DAREMerge",
+    "ProgressiveMerger",
+    "ProgressiveMergerConfig",
+    "MergeResult",
+    "QualityGateError",
 ]
 
 
 def merge_adapters(
-    adapters: Dict[str, str],
-    output_path: Union[str, Path],
+    adapters: dict[str, str],
+    output_path: str | Path,
     method: str = "linear",
-    weights: Optional[List[float]] = None,
+    weights: list[float] | None = None,
     density: float = 0.7,
     trim_fraction: float = 0.2,
     seed: int = 42,
